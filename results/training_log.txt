@@ -1,0 +1,36 @@
+
+⚠️  LLM testing disabled (use --with-llm flag to enable)
+   This saves API costs. Add '--with-llm' to test LLM predictions.
+
+======================================================================
+ UPI FRAUD DETECTION - ML + LLM HYBRID SYSTEM
+======================================================================
+
+[1/6] LOADING ENHANCED UPI TRANSACTION DATA
+----------------------------------------------------------------------
+✓ Loaded 150000 transactions
+  Fraud: 2755 (1.84%)
+  Legitimate: 147245
+
+[2/6] PREPROCESSING DATA
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/shivagupta/.gemini/antigravity/scratch/upi-fraud-detection/src/train.py", line 240, in <module>
+    main(use_llm=use_llm)
+    ~~~~^^^^^^^^^^^^^^^^^
+  File "/Users/shivagupta/.gemini/antigravity/scratch/upi-fraud-detection/src/train.py", line 49, in main
+    processed_data = preprocessor.preprocess(data, fit=True)
+  File "/Users/shivagupta/.gemini/antigravity/scratch/upi-fraud-detection/src/preprocessor.py", line 35, in preprocess
+    df = self._engineer_features(df)
+  File "/Users/shivagupta/.gemini/antigravity/scratch/upi-fraud-detection/src/preprocessor.py", line 75, in _engineer_features
+    df['hour'] = df['timestamp'].dt.hour
+                 ^^^^^^^^^^^^^^^^^^
+  File "/Users/shivagupta/.gemini/antigravity/scratch/upi-fraud-detection/venv/lib/python3.14/site-packages/pandas/core/generic.py", line 6206, in __getattr__
+    return object.__getattribute__(self, name)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "/Users/shivagupta/.gemini/antigravity/scratch/upi-fraud-detection/venv/lib/python3.14/site-packages/pandas/core/accessor.py", line 230, in __get__
+    return self._accessor(obj)
+           ~~~~~~~~~~~~~~^^^^^
+  File "/Users/shivagupta/.gemini/antigravity/scratch/upi-fraud-detection/venv/lib/python3.14/site-packages/pandas/core/indexes/accessors.py", line 698, in __new__
+    raise AttributeError("Can only use .dt accessor with datetimelike values")
+AttributeError: Can only use .dt accessor with datetimelike values. Did you mean: 'at'?
