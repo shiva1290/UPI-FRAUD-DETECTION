@@ -126,4 +126,5 @@ Developed at **Chandigarh University** under the supervision of **Er. Monika**.
 ## 📄 License
 This project is for academic research purposes.
 
-
+---
+*Built with ❤️ for a safer digital India.*
