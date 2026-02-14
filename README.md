@@ -218,21 +218,23 @@ Do **not** commit `.env` or real keys. The project never logs or prints the API 
 
 Use the script for your operating system. Each script: creates a virtual environment if needed, installs dependencies, trains models if missing (with LLM when `GROQ_API_KEY` is in `.env`), then starts the dashboard.
 
-### Linux
+### Option 1: One-command setup and run
+
+**Linux:**
 
 ```bash
 chmod +x setup_and_run_linux.sh
 ./setup_and_run_linux.sh
 ```
 
-### macOS
+**macOS:**
 
 ```bash
 chmod +x setup_and_run_mac.sh
 ./setup_and_run_mac.sh
 ```
 
-### Windows
+**Windows:**
 
 **Command Prompt:** double-click `setup_and_run_windows.bat` or run:
 ```cmd
@@ -245,15 +247,16 @@ setup_and_run_windows.bat
 ```
 If you see an execution policy error, run once: `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`
 
-### Generic Unix script (Linux/macOS)
+**Generic Unix (Linux/macOS):** If you prefer the single script:
 
-If you prefer the generic script:
 ```bash
 chmod +x setup_and_run.sh
 ./setup_and_run.sh
 ```
 
-### Manual: Train once, then start dashboard
+This will: create venv if missing, install dependencies, train models (with LLM if `GROQ_API_KEY` is in `.env`), then start the dashboard.
+
+### Option 2: Train once, then start dashboard
 
 **Linux / macOS:**
 
