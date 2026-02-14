@@ -2,119 +2,320 @@
 
 ![Project Status](https://img.shields.io/badge/Status-Production%20Ready-success)
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
-![License](https://img.shields.io/badge/License-Academic-lightgrey)
+![License](https://img.shields.io/badge/License-MIT-green)
 
-**A Next-Generation Hybrid Fraud Detection System combining Machine Learning and Large Language Models (LLM) for real-time UPI transaction security.**
-
----
-
-## 🚀 Overview
-
-This project implements a robust fraud detection pipeline designed for the Unified Payments Interface (UPI) ecosystem. Unlike traditional systems that rely solely on static rules or basic ML models, our system introduces a **Hybrid Architecture**:
-1. **Fast ML Layer (Random Forest)**: Filters high-volume transactions in milliseconds (30ms latency).
-2. **Cognitive LLM Layer (Llama 3.3 via Groq)**: Analyzes suspicious transactions to provide human-readable reasoning and advanced context awareness.
-
-## ✨ Key Features
-
-- **📊 Interactive Dashboard**: Real-time monitoring of transactions, fraud stats, and model performance.
-- **🧠 Hybrid Intelligence**:
-  - **Machine Learning**: Random Forest, XGBoost, LinearSVC (Accuracy > 99%).
-  - **GenAI Reasoning**: Explains *why* a transaction is fraudulent using natural language.
-- **⚡ Real-Time API**: RESTful endpoints for transaction scoring (Handle ~6000 RPM).
-- **🛡️ Advanced Engineering**:
-  - Device fingerprinting (location, device ID changes).
-  - Behavioral profiling (velocity, beneficiary aging).
-  - Network graphing (fan-in algorithms).
-- **📈 Comprehensive Metrics**: Visualizes ROC-AUC, Recall, Precision, and Confusion Matrices.
-
-## 🛠️ Technology Stack
-
-- **Backend**: Python, Flask, Pandas, Scikit-learn, Joblib
-- **Frontend**: HTML5, CSS3, JavaScript (Chart.js)
-- **AI/LLM**: Groq API (Llama 3.3 70B), XGBoost
-- **Data**: Synthetic UPI Transaction Dataset (Research Quality)
+**A hybrid fraud detection system that combines Machine Learning and Large Language Models (LLM) for real-time UPI transaction security.**
 
 ---
 
-## 🚀 Getting Started
+## Table of Contents
 
-Follow these steps to set up the project locally.
+- [What This Project Is](#what-this-project-is)
+- [What It Does](#what-it-does)
+- [What It Follows](#what-it-follows)
+- [Project Flow](#project-flow)
+- [Technology Stack](#technology-stack)
+- [Prerequisites](#prerequisites)
+- [Setup: Create Project Directories](#setup-create-project-directories)
+- [Configuration](#configuration)
+- [Running the Project](#running-the-project)
+- [Testing](#testing)
+- [Project Structure](#project-structure)
+- [Contributors](#contributors)
+- [License](#license)
 
-### Prerequisites
-- Python 3.9 or higher
-- Git
+---
 
-### 1. Clone the Repository
-```bash
-git clone https://github.com/shiva1290/UPI-FRAUD-DETECTION.git
-cd UPI-FRAUD-DETECTION
+## What This Project Is
+
+This project is a **hybrid fraud detection system** built for the **Unified Payments Interface (UPI)** ecosystem. It is designed for:
+
+- **Academic research** and coursework (e.g., final-year or capstone projects)
+- **Demonstrating** ML + LLM pipelines for financial security
+- **Real-time scoring** of UPI-like transactions as fraud or legitimate
+- **Explainable AI**: ML for speed, LLM for human-readable reasoning on suspicious cases
+
+It is **not** a production banking system; it uses synthetic/research-quality data and is intended for learning and experimentation.
+
+---
+
+## What It Does
+
+| Component | Purpose |
+|----------|--------|
+| **Data generation** | Creates synthetic UPI-style transactions (or uses optional real Kaggle data) with fraud patterns. |
+| **Preprocessing** | Engineers features (velocity, device change, location, beneficiary fan-in, etc.) and scales/normalizes for ML. |
+| **ML models** | Trains and compares Logistic Regression, Random Forest, XGBoost, SVM, Gradient Boosting; picks the best by F1. |
+| **LLM layer** | Uses Groq (Llama 3.3) to analyze a sample of transactions and return fraud/legit + reasoning and risk factors. |
+| **Flask API** | Serves predictions (`/api/predict`, `/api/predict_llm`), stats, model performance, and LLM samples. |
+| **Dashboard** | Web UI for testing transactions, viewing model comparison, hourly fraud distribution, and LLM reasoning. |
+
+---
+
+## What It Follows
+
+- **Hybrid architecture**: Fast ML filter + optional LLM for explainability.
+- **Standard ML workflow**: Load data → preprocess → train/validate/test → persist best model and preprocessor.
+- **REST API design**: JSON in/out, clear routes, rate limiting, optional API-key protection.
+- **Configuration via environment**: `.env` for secrets and options; no hardcoded keys.
+- **Reproducibility**: Fixed random seeds, versioned dependencies in `requirements.txt`.
+
+---
+
+## Project Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         SETUP (one-time)                                  │
+├─────────────────────────────────────────────────────────────────────────┤
+│  1. Clone repo → 2. Create venv → 3. pip install -r requirements.txt    │
+│  4. Create .env (optional: GROQ_API_KEY for LLM)                         │
+└─────────────────────────────────────────────────────────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         TRAINING (train.py)                               │
+├─────────────────────────────────────────────────────────────────────────┤
+│  [1] Load or generate data (data/upi_transactions.csv)                    │
+│  [2] Preprocess → save preprocessor (models/preprocessor.pkl)              │
+│  [3] Train/validate/test 5 ML models → pick best by F1                     │
+│  [4] Save best model (models/best_model_*.pkl + best_model_random_forest) │
+│  [5] (Optional) Run LLM on sample → save (results/llm_predictions.csv)     │
+│  [6] Save metrics & plots (results/model_performance.csv, *.png)           │
+└─────────────────────────────────────────────────────────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         RUNTIME (app.py)                                   │
+├─────────────────────────────────────────────────────────────────────────┤
+│  • Load model + preprocessor from models/                                 │
+│  • (If GROQ_API_KEY set) Initialize LLM detector                          │
+│  • Serve dashboard (/) and API (/api/*)                                    │
+│  • /api/predict, /api/predict_llm, /api/stats, /api/model_performance, …   │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2. Install Dependencies
-It's recommended to use a virtual environment.
+**Summary:** Setup → Train (data → preprocess → ML → optional LLM → save artifacts) → Run app (load artifacts, serve API and dashboard).
+
+---
+
+## Technology Stack
+
+| Layer | Technologies |
+|-------|--------------|
+| **Backend** | Python 3.9+, Flask, Pandas, NumPy, Scikit-learn, XGBoost, Joblib |
+| **Frontend** | HTML5, CSS3, JavaScript, Chart.js |
+| **AI/LLM** | Groq API (Llama 3.3 70B) |
+| **Data** | Synthetic UPI dataset; optional Kaggle integration |
+| **Config** | python-dotenv, `.env` |
+
+---
+
+## Prerequisites
+
+- **Python** 3.9 or higher  
+- **Git**  
+- (Optional) **Groq API key** for LLM features: [Groq Console](https://console.groq.com/keys)
+
+---
+
+## Setup: Create Project Directories
+
+After cloning, create the directories and virtual environment. Use the commands for your OS.
+
+### Linux / macOS (bash/zsh)
+
 ```bash
+# Clone
+git clone https://github.com/shiva1290/UPI-FRAUD-DETECTION.git
+cd UPI-FRAUD-DETECTION
+
+# Create directories (if not already present)
+mkdir -p data models results web/static web/templates src logs
+
+# Virtual environment
 python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate
+
+# Dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Setup Configuration
-Create a `.env` file for API keys (optional, only for LLM features):
-```bash
-cp .env.example .env
-# Edit .env and add your GROQ_API_KEY if you want LLM features
+### Windows (PowerShell)
+
+```powershell
+# Clone
+git clone https://github.com/shiva1290/UPI-FRAUD-DETECTION.git
+cd UPI-FRAUD-DETECTION
+
+# Create directories
+New-Item -ItemType Directory -Force -Path data, models, results, web\static, web\templates, src, logs
+
+# Virtual environment
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+
+# Dependencies
+pip install -r requirements.txt
 ```
 
-### 4. Run the System
-You can start the full system (Dashboard + API) with a single command:
-```bash
-./start_dashboard.sh
-```
-*Alternatively, run manually:* `cd src && python app.py`
+### Windows (Command Prompt)
 
-### 5. Access Dashboard
-Open your browser and navigate to:
-👉 **http://localhost:5000**
+```cmd
+git clone https://github.com/shiva1290/UPI-FRAUD-DETECTION.git
+cd UPI-FRAUD-DETECTION
+
+mkdir data 2>nul & mkdir models 2>nul & mkdir results 2>nul
+mkdir web\static 2>nul & mkdir web\templates 2>nul & mkdir src 2>nul & mkdir logs 2>nul
+
+python -m venv venv
+venv\Scripts\activate.bat
+
+pip install -r requirements.txt
+```
+
+**Note:** The repo may already include `data/`, `models/`, `results/`, `web/`, `src/`. The commands above ensure they exist; creating them again is safe.
 
 ---
 
-## 🧪 Testing & Verification
+## Configuration
 
-The project comes with a comprehensive test suite to ensure stability.
+Configuration is done via a **`.env`** file in the project root. Copy the example and edit as needed:
 
-**Run Backend Tests:**
 ```bash
+# Linux/macOS
+cp .env.example .env
+
+# Windows (PowerShell)
+Copy-Item .env.example .env
+```
+
+### Environment variables
+
+| Variable | Required | Description |
+|---------|----------|-------------|
+| `GROQ_API_KEY` | For LLM only | Groq API key for Llama 3.3. Get from [Groq Console](https://console.groq.com/keys). |
+| `LLM_ENABLED` | No | Set to `false` to disable LLM even if key is set. Default: `true` when key is set. |
+| `LLM_MODEL` | No | Groq model name. Default: `llama-3.3-70b-versatile`. |
+| `API_HOST` | No | Bind address. Default: `0.0.0.0`. |
+| `API_PORT` | No | Port. Default: `5000`. |
+| `DEBUG` | No | Flask debug. Default: `False`. |
+| `RATE_LIMIT_PER_MINUTE` | No | Max requests per minute per IP. Default: `60`. |
+| `MODEL_PATH` | No | Path to best ML model. Default: `models/best_model_random_forest.pkl`. |
+| `PREPROCESSOR_PATH` | No | Path to preprocessor. Default: `models/preprocessor.pkl`. |
+
+**Minimal `.env` for LLM:**
+
+```env
+GROQ_API_KEY=your_groq_api_key_here
+```
+
+Do **not** commit `.env` or real keys. The project never logs or prints the API key.
+
+---
+
+## Running the Project
+
+### Option 1: One-command setup and run (Linux/macOS)
+
+```bash
+chmod +x setup_and_run.sh
+./setup_and_run.sh
+```
+
+This will: create venv if missing, install dependencies, train models (with LLM if `GROQ_API_KEY` is in `.env`), then start the dashboard.
+
+### Option 2: Train once, then start dashboard
+
+**Linux / macOS:**
+
+```bash
+# Activate venv
+source venv/bin/activate
+
+# Train (ML only; no API key needed)
+cd src && python train.py && cd ..
+
+# Or train with LLM (requires GROQ_API_KEY in .env)
+cd src && python train.py --with-llm && cd ..
+
+# Start dashboard
+./start_dashboard.sh
+# Or: cd src && python app.py
+```
+
+**Windows (PowerShell):**
+
+```powershell
+.\venv\Scripts\Activate.ps1
+cd src; python train.py; cd ..
+# Optional: python train.py --with-llm
+cd src; python app.py
+```
+
+**Windows (Command Prompt):**
+
+```cmd
+venv\Scripts\activate.bat
+cd src && python train.py && cd ..
+cd src && python app.py
+```
+
+### Access
+
+- **Dashboard:** [http://localhost:5000](http://localhost:5000)  
+- **Health:** [http://localhost:5000/health](http://localhost:5000/health)
+
+---
+
+## Testing
+
+With the app running in another terminal:
+
+```bash
+# Linux/macOS
+source venv/bin/activate
+cd src && python test_api.py
+
+# Windows
+venv\Scripts\activate
 cd src
 python test_api.py
 ```
 
-**Train/Retrain Models:**
-```bash
-cd src
-python train.py --with-llm  # Remove flag to skip LLM training
+---
+
+## Project Structure
+
+```
+UPI-FRAUD-DETECTION/
+├── data/                    # Datasets (e.g. upi_transactions.csv)
+├── models/                  # Saved model and preprocessor (.pkl)
+├── results/                 # model_performance.csv, plots, llm_predictions.csv
+├── src/                     # Backend and training
+│   ├── app.py              # Flask API and dashboard server
+│   ├── config.py           # Configuration from .env
+│   ├── train.py            # Full training pipeline (data → ML → optional LLM)
+│   ├── preprocessor.py     # Feature engineering and scaling
+│   ├── models.py           # ML model definitions and comparison
+│   ├── llm_detector.py     # Groq-based LLM fraud detector
+│   ├── data_generator.py   # Synthetic UPI data generation
+│   └── test_api.py         # API tests
+├── web/
+│   ├── static/             # CSS, JS (e.g. dashboard.js)
+│   └── templates/         # HTML (e.g. index.html)
+├── .env.example            # Example environment variables
+├── .env                     # Your config (do not commit)
+├── requirements.txt         # Python dependencies
+├── setup_and_run.sh        # One-command setup + train + run (Unix)
+├── start_dashboard.sh      # Start dashboard (Unix)
+├── run.sh                  # Training with LLM (Unix)
+└── README.md               # This file
 ```
 
 ---
 
-## 📚 Project Structure
-
-```
-.
-├── data/               # Dataset storage
-├── models/             # Trained ML models (.pkl)
-├── results/            # Training metrics & visuals
-├── src/                # Core source code
-│   ├── app.py         # Flask API & Server
-│   ├── models.py      # ML Model wrappers
-│   ├── train.py       # Training pipeline
-│   └── ...
-├── web/                # Frontend assets
-│   ├── static/        # CSS & JS
-│   └── templates/     # HTML templates
-└── ...
-```
-
-## 👨‍💻 Contributors
+## Contributors
 
 Developed at **Chandigarh University** under the supervision of **Er. Monika**.
 
@@ -123,7 +324,12 @@ Developed at **Chandigarh University** under the supervision of **Er. Monika**.
 - **Priyanshu Saini** (23BCS12371)
 - **Paramjeet Panchal** (23BCS10104)
 
-## 📄 License
-This project is for academic research purposes.
+---
 
+## License
 
+This project is **open source** and **owned by the contributing team**. It is released under the **MIT License**.
+
+You may use, copy, modify, merge, publish, distribute, sublicense, and sell copies of the software, subject to the conditions in the [LICENSE](LICENSE) file. The license requires preservation of the copyright and license notice. The authors and the team are not liable for any claim or damages arising from the use of the software.
+
+See the [LICENSE](LICENSE) file in the repository for the full text.

@@ -21,13 +21,15 @@ class EnhancedUPIDataGenerator:
             self._load_real_dataset()
         
     def _load_real_dataset(self):
-        """Load and prepare the real Kaggle dataset"""
+        """Load and prepare the real Kaggle dataset (optional; uses synthetic if missing)."""
         try:
-            # Read dataset paths
-            with open('../data/kaggle_dataset_paths.txt', 'r') as f:
-                paths = dict(line.strip().split(': ') for line in f if ':' in line)
+            paths_file = os.path.join(os.path.dirname(__file__), '..', 'data', 'kaggle_dataset_paths.txt')
+            if not os.path.exists(paths_file):
+                print("⚠️  Kaggle paths file not found, using synthetic data only")
+                return
+            with open(paths_file, 'r') as f:
+                paths = dict(line.strip().split(': ', 1) for line in f if ':' in line)
             
-            # Load the larger dataset (skullagos5246)
             dataset_path = paths.get('skullagos5246', '')
             csv_path = os.path.join(dataset_path, 'upi_transactions_2024.csv')
             

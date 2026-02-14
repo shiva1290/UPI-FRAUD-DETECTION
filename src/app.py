@@ -21,6 +21,9 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config import config
 
+# Project root for resolving data/results paths (works from any cwd)
+_APP_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # Configure logging
 os.makedirs('logs', exist_ok=True)
 logging.basicConfig(
@@ -33,7 +36,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__, static_folder='../web/static', template_folder='../web/templates')
+app = Flask(
+    __name__,
+    static_folder=os.path.join(_APP_BASE, 'web', 'static'),
+    template_folder=os.path.join(_APP_BASE, 'web', 'templates')
+)
 
 # CORS configuration
 CORS(app, resources={
@@ -132,21 +139,52 @@ except Exception as e:
 
 # Load LLM if enabled
 llm_detector = None
+llm_init_error = None
+
+# Log that API key is set (never log the key itself)
+if config.GROQ_API_KEY:
+    logger.info("API key detected.")
+
 if config.LLM_ENABLED:
     try:
+        # Check if groq is installed
+        import importlib.util
+        if importlib.util.find_spec("groq") is None:
+            raise ImportError("The 'groq' library is not installed. Please run: pip install groq")
+            
         from llm_detector import LLMFraudDetector
         llm_detector = LLMFraudDetector(api_key=config.GROQ_API_KEY, model=config.LLM_MODEL)
         logger.info(f"✓ LLM detector loaded: {config.LLM_MODEL}")
     except Exception as e:
-        logger.warning(f"LLM detector not available: {str(e)}")
+        llm_init_error = str(e)
+        logger.warning(f"LLM detector initialization failed: {str(e)}")
 
-# Load model performance data
+# Load model performance data (CSV has index column = model name, no header for first col)
 try:
     import csv
     model_performance = []
-    with open('../results/model_performance.csv', 'r') as f:
+    perf_path = os.path.join(_APP_BASE, 'results', 'model_performance.csv')
+    _metric_keys = {'accuracy', 'precision', 'recall', 'f1_score', 'roc_auc'}
+    with open(perf_path, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
+            # Model name is in the first column (pandas index); DictReader may give key '' or 'Unnamed: 0'
+            model_name = row.get('model')
+            if not model_name:
+                for k in row:
+                    if k not in _metric_keys and row.get(k, '').strip():
+                        model_name = row[k].strip()
+                        break
+            if not model_name:
+                model_name = 'unknown'
+            row['model'] = model_name
+            # Ensure numeric fields are numbers for JSON/charts
+            for key in _metric_keys:
+                if key in row and row[key] not in ('', None):
+                    try:
+                        row[key] = float(row[key])
+                    except (TypeError, ValueError):
+                        pass
             model_performance.append(row)
     logger.info(f"✓ Loaded performance data for {len(model_performance)} models")
 except Exception as e:
@@ -156,7 +194,8 @@ except Exception as e:
 # Load dataset globally for endpoints
 try:
     logger.info("Loading dataset...")
-    DATASET = pd.read_csv('../data/upi_transactions.csv')
+    data_path = os.path.join(_APP_BASE, 'data', 'upi_transactions.csv')
+    DATASET = pd.read_csv(data_path)
     logger.info(f"✓ Dataset loaded: {len(DATASET)} records")
 except Exception as e:
     logger.warning(f"Could not load dataset: {str(e)}")
@@ -240,11 +279,18 @@ def get_hourly_fraud():
         logger.error(f"Error calculating hourly fraud: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+def _get_inner_model(model):
+    """Get the inner sklearn model (FraudDetectionModel wraps it in .model)."""
+    if model is None:
+        return None
+    return getattr(model, 'model', model)
+
 @app.route('/api/feature_importance')
 @handle_errors
 def get_feature_importance():
     """Get model feature importance"""
-    if ml_model is None or not hasattr(ml_model, 'feature_importances_'):
+    inner = _get_inner_model(ml_model)
+    if inner is None or not hasattr(inner, 'feature_importances_'):
         # Return mock/default importance if not available
         return jsonify({
             'features': ['beneficiary_fan_in', 'transaction_velocity', 'amount', 'is_night', 'failed_attempts'],
@@ -252,11 +298,11 @@ def get_feature_importance():
         })
     
     try:
+        importance = inner.feature_importances_
         # Get feature names from preprocessor if available
-        feature_names = preprocessor.feature_names if preprocessor and hasattr(preprocessor, 'feature_names') else [f'Feature {i}' for i in range(len(ml_model.feature_importances_))]
+        feature_names = preprocessor.feature_names if preprocessor and hasattr(preprocessor, 'feature_names') else [f'Feature {i}' for i in range(len(importance))]
         
         # Sort by importance
-        importance = ml_model.feature_importances_
         indices = np.argsort(importance)[::-1][:10]  # Top 10
         
         return jsonify({
@@ -294,16 +340,19 @@ def get_recent_transactions():
 def get_llm_samples():
     """Get LLM training samples with reasoning"""
     try:
-        # Try to load LLM results
-        results_path = '../results/llm_predictions.csv'
-        if os.path.exists(results_path):
-            df = pd.read_csv(results_path)
-            # Select relevant columns
-            if 'llm_reasoning' in df.columns:
-                samples = df.head(5).to_dict(orient='records') # Return top 5
-                return jsonify(samples)
-        
-        return jsonify([])
+        results_path = os.path.join(_APP_BASE, 'results', 'llm_predictions.csv')
+        if not os.path.exists(results_path):
+            return jsonify([])
+        df = pd.read_csv(results_path)
+        if 'llm_reasoning' not in df.columns or 'llm_prediction' not in df.columns:
+            return jsonify([])
+        # Build response with keys the dashboard expects (llm_risk_factors = risk_factors from CSV)
+        samples = []
+        for _, row in df.head(5).iterrows():
+            rec = row.to_dict()
+            rec['llm_risk_factors'] = rec.get('risk_factors', '[]')
+            samples.append(rec)
+        return jsonify(samples)
     except Exception as e:
         logger.error(f"Error loading LLM samples: {str(e)}")
         return jsonify([])
@@ -436,7 +485,13 @@ def predict_ml():
 def predict_llm():
     """LLM-based fraud prediction"""
     if llm_detector is None:
-        return jsonify({'error': 'LLM detector not available'}), 503
+        # Diagnostic info
+        error_msg = "LLM detector not available."
+        if not config.LLM_ENABLED:
+            error_msg += " (LLM_ENABLED is False in config)"
+        else:
+            error_msg += f" (Initialization failed: {llm_init_error or 'Check server logs'})"
+        return jsonify({'error': error_msg}), 503
     
     data = request.get_json()
     if not data:
@@ -494,9 +549,13 @@ def internal_error(e):
 
 if __name__ == '__main__':
     try:
-        # Validate configuration
-        config.validate()
-        logger.info("Configuration validated successfully")
+        # Validate configuration (model/preprocessor); start anyway so dashboard is usable
+        try:
+            config.validate()
+            logger.info("Configuration validated successfully")
+        except ValueError as e:
+            logger.warning(str(e))
+            logger.info("Run training first: cd src && python train.py   (or python train.py --with-llm for LLM)")
         
         logger.info(f"Starting UPI Fraud Detection API on {config.HOST}:{config.PORT}")
         logger.info(f"Debug mode: {config.DEBUG}")

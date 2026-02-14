@@ -19,8 +19,15 @@ cd src
 # Activate virtual environment
 source ../venv/bin/activate
 
+# Load environment variables from .env file (parent directory)
+if [ -f ../.env ]; then
+    # Handle Windows line endings and comments safely
+    export $(grep -v '^#' ../.env | sed 's/\r$//' | xargs)
+fi
+
 # Run the training pipeline
-python train.py
+# python train.py
+python train.py --with-llm
 
 echo ""
 echo "======================================================================"

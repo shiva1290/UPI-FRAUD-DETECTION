@@ -52,7 +52,10 @@ async function loadModelPerformance() {
                 bestModel = row;
             }
             
-            const modelName = model.model ? (model.model.charAt(0).toUpperCase() + model.model.slice(1).replace('_', ' ')) : 'Unknown';
+            const rawName = (model.model || '').trim();
+            const modelName = rawName
+                ? rawName.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
+                : 'Unknown';
             
             row.innerHTML = `
                 <td><span class="model-name">${modelName}</span></td>
@@ -71,10 +74,13 @@ async function loadModelPerformance() {
         
         // Create chart
         const ctx = document.getElementById('modelPerformanceChart').getContext('2d');
+        const formatModelLabel = (name) => (name || '').trim()
+            ? (name || '').trim().split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
+            : 'Unknown';
         new Chart(ctx, {
             type: 'bar',
             data: {
-                labels: models.map(m => (m.model || '').toUpperCase()),
+                labels: models.map(m => formatModelLabel(m.model)),
                 datasets: [
                     {
                         label: 'Accuracy',
@@ -274,25 +280,33 @@ async function loadLLMSamples() {
         
         samples.forEach(sample => {
             const card = document.createElement('div');
-            card.className = `llm-card ${sample.llm_prediction === 1 ? 'fraud' : ''}`;
-            
-            const factors = JSON.parse(sample.llm_risk_factors.replace(/'/g, '"'));
-            
+            const isFraud = Number(sample.llm_prediction) === 1;
+            card.className = `llm-card ${isFraud ? 'fraud' : ''}`;
+            // risk_factors from CSV may be Python-style string "['a','b']"; support both that and llm_risk_factors
+            const rawFactors = sample.llm_risk_factors ?? sample.risk_factors ?? '[]';
+            let factors = [];
+            try {
+                factors = typeof rawFactors === 'string'
+                    ? (rawFactors.trim().startsWith('[') ? JSON.parse(rawFactors.replace(/'/g, '"')) : [])
+                    : (Array.isArray(rawFactors) ? rawFactors : []);
+            } catch (_) {
+                factors = [];
+            }
+            const confidence = sample.llm_confidence != null ? Number(sample.llm_confidence).toFixed(0) : '0';
             card.innerHTML = `
                 <div class="llm-header">
-                    <span class="llm-prediction ${sample.llm_prediction === 1 ? 'fraud' : 'legitimate'}">
-                        ${sample.llm_prediction === 1 ? '⚠️ FRAUD' : '✅ LEGITIMATE'}
+                    <span class="llm-prediction ${isFraud ? 'fraud' : 'legitimate'}">
+                        ${isFraud ? '⚠️ FRAUD' : '✅ LEGITIMATE'}
                     </span>
                     <span class="llm-confidence">
-                        Confidence: ${(sample.llm_confidence * 100).toFixed(0)}%
+                        Confidence: ${confidence}%
                     </span>
                 </div>
-                <div class="llm-reasoning">${sample.llm_reasoning}</div>
+                <div class="llm-reasoning">${(sample.llm_reasoning ?? '').toString()}</div>
                 <div class="llm-factors">
                     ${factors.map(f => `<span class="factor-tag">• ${f}</span>`).join('')}
                 </div>
             `;
-            
             container.appendChild(card);
         });
         
