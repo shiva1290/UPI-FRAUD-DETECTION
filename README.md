@@ -216,7 +216,38 @@ Do **not** commit `.env` or real keys. The project never logs or prints the API 
 
 ## Running the Project
 
-### Option 1: One-command setup and run (Linux/macOS)
+Use the script for your operating system. Each script: creates a virtual environment if needed, installs dependencies, trains models if missing (with LLM when `GROQ_API_KEY` is in `.env`), then starts the dashboard.
+
+### Option 1: One-command setup and run
+
+**Linux:**
+
+```bash
+chmod +x setup_and_run_linux.sh
+./setup_and_run_linux.sh
+```
+
+**macOS:**
+
+```bash
+chmod +x setup_and_run_mac.sh
+./setup_and_run_mac.sh
+```
+
+**Windows:**
+
+**Command Prompt:** double-click `setup_and_run_windows.bat` or run:
+```cmd
+setup_and_run_windows.bat
+```
+
+**PowerShell:** (if execution policy allows)
+```powershell
+.\setup_and_run_windows.ps1
+```
+If you see an execution policy error, run once: `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`
+
+**Generic Unix (Linux/macOS):** If you prefer the single script:
 
 ```bash
 chmod +x setup_and_run.sh
@@ -307,11 +338,19 @@ UPI-FRAUD-DETECTION/
 ├── .env.example            # Example environment variables
 ├── .env                     # Your config (do not commit)
 ├── requirements.txt         # Python dependencies
-├── setup_and_run.sh        # One-command setup + train + run (Unix)
-├── start_dashboard.sh      # Start dashboard (Unix)
-├── run.sh                  # Training with LLM (Unix)
-└── README.md               # This file
+├── setup_and_run_linux.sh   # Setup + run (Linux)
+├── setup_and_run_mac.sh     # Setup + run (macOS)
+├── setup_and_run_windows.bat   # Setup + run (Windows CMD)
+├── setup_and_run_windows.ps1   # Setup + run (Windows PowerShell)
+├── setup_and_run.sh         # Setup + run (generic Unix)
+├── start_dashboard.sh       # Start dashboard (Unix)
+├── run.sh                   # Training with LLM (Unix)
+├── demo_llm.sh              # Optional: CLI LLM demo (Unix; see README)
+├── LLM_SETUP.md             # Optional: LLM setup (superseded by this README)
+└── README.md                # This file
 ```
+
+**Note:** LLM setup (Groq API key, `.env`) is in [Configuration](#configuration) above. To test LLM from the command line, run from project root: `cd src && source ../venv/bin/activate && python demo_llm.py` (or use the dashboard’s “Analyze with LLM”).
 
 ---
 
