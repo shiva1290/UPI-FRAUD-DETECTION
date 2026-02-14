@@ -4,6 +4,16 @@ Compares traditional ML models with LLM-based fraud detection
 """
 
 import sys
+import os
+
+# Load .env from project root so GROQ_API_KEY is available (and properly parsed)
+try:
+    from dotenv import load_dotenv
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    load_dotenv(os.path.join(_root, '.env'))
+except ImportError:
+    pass
+
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -18,6 +28,10 @@ from llm_detector import LLMFraudDetector
 def main(use_llm=False):
     """Main training pipeline with LLM comparison"""
     
+    # Ensure output dirs exist (paths relative to src/)
+    for d in ('../models', '../results', '../data'):
+        os.makedirs(os.path.join(os.path.dirname(__file__), d), exist_ok=True)
+    
     print("="*70)
     print(" UPI FRAUD DETECTION - ML + LLM HYBRID SYSTEM")
     print("="*70)
@@ -27,7 +41,6 @@ def main(use_llm=False):
     print("-"*70)
     
     # Check if enhanced dataset exists, otherwise generate it
-    import os
     data_path = '../data/upi_transactions.csv'
     if not os.path.exists(data_path):
         print("⚠️  Enhanced dataset not found, generating...")
@@ -36,7 +49,7 @@ def main(use_llm=False):
         data = generator.generate()
         data.to_csv(data_path, index=False)
     else:
-        data = pd.read_csv(data_path)
+        data = pd.read_csv(data_path, parse_dates=['timestamp'])
     
     print(f"✓ Loaded {len(data)} transactions")
     print(f"  Fraud: {data['is_fraud'].sum()} ({data['is_fraud'].mean():.2%})")
@@ -91,7 +104,11 @@ def main(use_llm=False):
     
     # Get best ML model
     best_ml_model, best_model_name = comparison.get_best_model(metric='f1_score')
+    models_dir = os.path.join(os.path.dirname(__file__), '..', 'models')
+    os.makedirs(models_dir, exist_ok=True)
     best_ml_model.save(f'../models/best_model_{best_model_name}.pkl')
+    # Save again under default name so app config finds it without env change
+    best_ml_model.save('../models/best_model_random_forest.pkl')
     
     # Step 5: LLM-Based Detection (if enabled and API key is available)
     print("\n[5/6] LLM-BASED FRAUD DETECTION")
@@ -103,6 +120,27 @@ def main(use_llm=False):
         llm_detector = None
     else:
         try:
+            # Check and clean API Key
+            api_key = os.environ.get('GROQ_API_KEY')
+            
+            # Fallback: Try loading .env manually if not in environment
+            if not api_key:
+                env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+                if os.path.exists(env_path):
+                    with open(env_path, 'r') as f:
+                        for line in f:
+                            if 'GROQ_API_KEY' in line and not line.strip().startswith('#'):
+                                _, val = line.strip().split('=', 1)
+                                # Strip quotes and whitespace so Groq accepts the key
+                                val = val.strip().strip('"').strip("'").replace('\r', '').replace('\n', '').strip()
+                                if val:
+                                    os.environ['GROQ_API_KEY'] = val
+                                    api_key = val
+                                break
+            
+            if api_key:
+                print(f"   ✓ API key detected.")
+
             # Initialize LLM detector
             llm_detector = LLMFraudDetector()
             
@@ -117,12 +155,15 @@ def main(use_llm=False):
             print(f"   Estimated API cost: ~100 requests instead of {len(test_data_original)}")
             
             # Stratified sampling to maintain fraud distribution
-            llm_sample, _ = train_test_split(
-                test_data_original,
-                test_size=len(test_data_original)-100,
-                stratify=test_data_original['is_fraud'],
-                random_state=42
-            )
+            if len(test_data_original) > 100:
+                llm_sample, _ = train_test_split(
+                    test_data_original,
+                    test_size=len(test_data_original)-100,
+                    stratify=test_data_original['is_fraud'],
+                    random_state=42
+                )
+            else:
+                llm_sample = test_data_original
             
             fraud_count = llm_sample['is_fraud'].sum()
             print(f"   Sample: {len(llm_sample)} transactions ({fraud_count} frauds, {fraud_count/len(llm_sample)*100:.2f}%)\n")
@@ -137,13 +178,24 @@ def main(use_llm=False):
             # Show sample predictions with reasoning
             llm_detector.analyze_sample_predictions(llm_results, n_samples=3)
             
-            # Add LLM metrics to comparison
+            # Add LLM metrics to comparison (include ROC-AUC from confidence scores)
             if hasattr(llm_detector, 'metrics'):
+                from sklearn.metrics import roc_auc_score
+                y_true = llm_results['actual_is_fraud'].values
+                # Use LLM confidence as probability of positive class (fraud) for ROC-AUC
+                y_score = (llm_results['llm_confidence'] / 100.0).values
+                roc_auc = 0.0
+                if len(np.unique(y_true)) > 1 and len(y_true) > 0:
+                    try:
+                        roc_auc = roc_auc_score(y_true, y_score)
+                    except Exception:
+                        pass
                 comparison.results['llm_groq'] = {
                     'accuracy': llm_detector.metrics['accuracy'],
                     'precision': llm_detector.metrics['precision'],
                     'recall': llm_detector.metrics['recall'],
                     'f1_score': llm_detector.metrics['f1_score'],
+                    'roc_auc': roc_auc,
                     'confusion_matrix': None
                 }
                 print("\n✓ LLM metrics added to comparison")
@@ -157,6 +209,8 @@ def main(use_llm=False):
             llm_detector = None
         except Exception as e:
             print(f"\n⚠️  Error in LLM detection: {e}")
+            import traceback
+            traceback.print_exc()
             llm_detector = None
     
     # Step 6: Results and Visualization
@@ -254,4 +308,3 @@ if __name__ == "__main__":
     
     # Modify main() to accept use_llm parameter
     main(use_llm=use_llm)
-

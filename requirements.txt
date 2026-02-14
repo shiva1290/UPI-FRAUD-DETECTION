@@ -11,3 +11,4 @@ groq==0.4.1
 python-dotenv==1.0.0
 requests==2.31.0
 scipy==1.11.4
+imbalanced-learn==0.12.0

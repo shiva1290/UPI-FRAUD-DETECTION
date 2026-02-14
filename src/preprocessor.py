@@ -67,15 +67,26 @@ class UPIPreprocessor:
         """Create additional features from existing data"""
         
         # Convert timestamp to datetime if not already
-        if 'timestamp' in df.columns and df['timestamp'].dtype == 'object':
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-        
+        if 'timestamp' in df.columns:
+            # Force conversion to datetime to ensure .dt accessor works
+            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+            
+            # Safety check: Ensure we have a valid datetime column before accessing .dt
+            if not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
+                df['timestamp'] = df['timestamp'].astype('datetime64[ns]')
+
         # Temporal features - only if not already present
         if 'timestamp' in df.columns and 'hour' not in df.columns:
-            df['hour'] = df['timestamp'].dt.hour
-            df['day_of_week'] = df['timestamp'].dt.dayofweek
-            df['is_weekend'] = df['day_of_week'].isin([5, 6]).astype(int)
-            df['is_night'] = df['hour'].isin([22, 23, 0, 1, 2, 3, 4, 5]).astype(int)
+            try:
+                df['hour'] = df['timestamp'].dt.hour
+                df['day_of_week'] = df['timestamp'].dt.dayofweek
+                df['is_weekend'] = df['day_of_week'].isin([5, 6]).astype(int)
+                df['is_night'] = df['hour'].isin([22, 23, 0, 1, 2, 3, 4, 5]).astype(int)
+            except (AttributeError, TypeError, ValueError) as e:
+                print(f"⚠️ Warning: Could not extract temporal features ({e}). Timestamp dtype: {df['timestamp'].dtype}")
+                # Fallback to defaults to prevent crash
+                for col in ['hour', 'day_of_week', 'is_weekend', 'is_night']:
+                    df[col] = 0
         
         # Amount-based features - only if not already present
         if 'amount' in df.columns and 'amount_log' not in df.columns:

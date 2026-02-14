@@ -5,6 +5,20 @@ Handles environment variables and production settings
 import os
 from typing import Optional, List
 from dataclasses import dataclass, field
+from dotenv import load_dotenv
+
+# Project root (parent of src/)
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Load .env file from project root
+load_dotenv(os.path.join(_BASE_DIR, '.env'))
+
+def _model_path(env_key: str, default_filename: str) -> str:
+    """Resolve model path: use env if set, else project_root/models/filename."""
+    val = os.getenv(env_key)
+    if val:
+        return val
+    return os.path.join(_BASE_DIR, 'models', default_filename)
 
 @dataclass
 class Config:
@@ -18,14 +32,15 @@ class Config:
     # CORS Settings
     CORS_ORIGINS: str = os.getenv('CORS_ORIGINS', '*')
     
-    # Model Settings
-    MODEL_PATH: str = os.getenv('MODEL_PATH', '../models/best_model_random_forest.pkl')
-    PREPROCESSOR_PATH: str = os.getenv('PREPROCESSOR_PATH', '../models/preprocessor.pkl')
+    # Model Settings (paths resolved from project root so app works from any cwd)
+    MODEL_PATH: str = field(default_factory=lambda: _model_path('MODEL_PATH', 'best_model_random_forest.pkl'))
+    PREPROCESSOR_PATH: str = field(default_factory=lambda: _model_path('PREPROCESSOR_PATH', 'preprocessor.pkl'))
     
     # LLM Settings
     GROQ_API_KEY: Optional[str] = os.getenv('GROQ_API_KEY')
     LLM_MODEL: str = os.getenv('LLM_MODEL', 'llama-3.3-70b-versatile')
-    LLM_ENABLED: bool = os.getenv('LLM_ENABLED', 'False').lower() == 'true'
+    LLM_ENABLED: bool = field(default_factory=lambda: 
+        os.getenv('LLM_ENABLED', 'true' if os.getenv('GROQ_API_KEY') else 'false').lower() == 'true')
     
     # Rate Limiting
     RATE_LIMIT_ENABLED: bool = os.getenv('RATE_LIMIT_ENABLED', 'True').lower() == 'true'

@@ -252,6 +252,30 @@ def test_response_time():
         print_test("Response Time", False, str(e))
         return False
 
+def test_llm_prediction():
+    """Test LLM prediction endpoint"""
+    try:
+        # Simple transaction for LLM analysis
+        transaction = {
+            "amount": 95000,
+            "hour": 3,
+            "day_of_week": 6,
+            "merchant_id": "SUSPICIOUS_STORE"
+        }
+        
+        print("  (Waiting for LLM response... this may take a few seconds)")
+        response = requests.post(f"{BASE_URL}/api/predict_llm", json=transaction)
+        data = response.json()
+        
+        success = response.status_code == 200
+        msg = f"Reasoning: {data.get('reasoning', 'N/A')[:60]}..." if success else f"Error: {data.get('error', 'Unknown')}"
+        
+        print_test("LLM Prediction", success, msg)
+        return success
+    except Exception as e:
+        print_test("LLM Prediction", False, str(e))
+        return False
+
 def run_all_tests():
     """Run all tests"""
     print(f"\n{Colors.BLUE}{'='*60}{Colors.END}")
@@ -270,6 +294,7 @@ def run_all_tests():
             test_ml_prediction_suspicious,
             test_ml_prediction_missing_fields,
             test_ml_prediction_invalid_types,
+            test_llm_prediction,
         ]),
         ("Performance & Load", [
             test_response_time,
