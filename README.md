@@ -1,4 +1,4 @@
-# UPI Fraud Detection System 🛡️
+# UPI Fraud Risk Assessment Framework 🛡️
 
 ![Project Status](https://img.shields.io/badge/Status-Production%20Ready-success)
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
@@ -8,13 +8,27 @@
 
 ---
 
+## Key Contributions
+
+> **For reviewers:** Contribution is spread across sections; this block summarizes the novelty at a glance.
+
+| Contribution | Description |
+|--------------|-------------|
+| **Risk-based decision layer** | Introduced a decision layer *between* ML prediction and explanation. Configurable thresholds (allow/review/block) replace raw binary labels and drive when LLM is invoked. |
+| **Conditional LLM execution** | LLM is triggered only for medium/high-risk cases, not for every transaction. Reduces computational overhead and API cost. *The LLM is not used for fraud prediction but only for generating explanations for high-risk transactions.* |
+| **Hybrid architecture** | ML handles real-time scoring; LLM adds interpretability on demand. Improves explainability without affecting inference speed. |
+
+---
+
 ## Table of Contents
 
+- [Key Contributions](#key-contributions)
 - [Problem Statement](#problem-statement)
 - [Contribution](#contribution)
 - [What This Project Is](#what-this-project-is)
 - [What It Does](#what-it-does)
 - [ML Metrics & Interpretation](#ml-metrics--interpretation)
+- [Feature importance interpretation](#feature-importance-interpretation)
 - [Risk Assessment Framework](#risk-assessment-framework)
 - [Architecture](#architecture)
 - [Limitations](#limitations)
@@ -91,7 +105,7 @@ The dashboard explains key metrics via hover tooltips. Below is the full theory 
 
 **False positives vs false negatives.** *False positive*: A legitimate transaction wrongly flagged as fraud. Impact: customer friction, blocked payments, support load, lost revenue. *False negative*: A fraudulent transaction wrongly allowed. Impact: direct financial loss, chargebacks, regulatory risk, reputational damage. For UPI fraud, false negatives are typically more costly. We use F1-score to balance both, and ROC-AUC to assess ranking quality across thresholds.
 
-**Why moderate recall (~48%) is acceptable.** Moderate recall reduces false alarms: chasing very high recall often means lowering the decision threshold, which sharply increases false positives. Too many false alarms overload support, frustrate customers, and block legitimate payments. A ~48% recall balances catching fraud with manageable alert volume.
+**Why moderate recall (~48%) is acceptable.** Moderate recall reduces false alarms: chasing very high recall often means lowering the decision threshold, which sharply increases false positives. Too many false alarms overload support, frustrate customers, and block legitimate payments. A ~48% recall balances catching fraud with manageable alert volume. *Higher recall increases false positives significantly; therefore a balanced threshold was selected to avoid unnecessary transaction blocking.*
 
 **Threshold trade-off.** Raising the decision threshold increases precision and lowers recall; lowering it does the opposite.
 
@@ -118,6 +132,12 @@ Random Forest is the final selected model based on balanced Precision and Recall
 | **Limitations** | No human-readable reasoning, black-box, fixed feature set | Slower (~2–5s per call), requires API key and incurs cost, non-deterministic |
 
 **Recommendation.** Use ML classifiers for real-time fraud classification. Use the LLM explanation module to generate human-readable reasoning for medium/high-risk cases. The LLM is not a classifier; it explains why a transaction was flagged.
+
+**Clarification.** The LLM is not used for fraud prediction but only for generating explanations for high-risk transactions.
+
+### Feature importance interpretation
+
+The dashboard plots top contributing fraud features. In our model, *transaction velocity* and *amount deviation* were the most influential features in fraud prediction, followed by device change and beneficiary-related signals. This reflects real-world patterns: rapid or unusual transaction patterns and large deviations from typical amounts are strong fraud indicators.
 
 ---
 
@@ -206,7 +226,7 @@ The system is a **risk assessment framework**, not a binary classifier:
 
 - **LLM latency and cost**: LLM reasoning adds hundreds of milliseconds per request and consumes API credits. It is intended as an optional, on-demand layer for medium/high-risk cases, not for every transaction.
 
-- **Moderate recall by design**: The selected model targets ~48% recall to limit false alarms. Chasing very high recall would lower the decision threshold and increase false positives, overloading support and blocking legitimate payments. See dashboard tooltips for details.
+- **Moderate recall by design**: The selected model targets ~48% recall to limit false alarms. Higher recall increases false positives significantly; therefore a balanced threshold was selected to avoid unnecessary transaction blocking. See dashboard tooltips for details.
 
 - **Academic scope**: This project is for learning and demonstration. It is not audited for production use, regulatory compliance, or security hardening.
 
