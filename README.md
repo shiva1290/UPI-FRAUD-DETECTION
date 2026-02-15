@@ -14,6 +14,7 @@
 - [Contribution](#contribution)
 - [What This Project Is](#what-this-project-is)
 - [What It Does](#what-it-does)
+- [ML Metrics & Interpretation](#ml-metrics--interpretation)
 - [Risk Assessment Framework](#risk-assessment-framework)
 - [Architecture](#architecture)
 - [Limitations](#limitations)
@@ -73,8 +74,50 @@ It is **not** a production banking system; it uses synthetic/research-quality da
 | **ML prediction** | Produces fraud probability (0–1) from trained model. |
 | **Risk engine** | Converts probability → risk score (0–100) → risk level (Low/Medium/High) → action (allow/review/block). |
 | **LLM explanation** | Rule-based explanations for all; optional Groq (Llama 3.3) for human-readable reasoning on medium/high risk. |
-| **Flask API** | Serves risk assessments (`/api/predict`, `/api/predict_llm`), stats, model performance. |
-| **Dashboard** | Web UI with risk gauge, latency comparison, and optional LLM analysis per transaction. |
+| **Flask API** | Serves risk assessments (`/api/predict`, `/api/predict_llm`), stats, model performance, confusion matrix. |
+| **Dashboard** | Web UI with risk gauge, confusion matrix heatmap, metrics tooltips, latency comparison, and optional LLM analysis per transaction. |
+
+---
+
+## ML Metrics & Interpretation
+
+The dashboard explains key metrics via hover tooltips. Below is the full theory (from `metrics_analysis.py`) that backs those tooltips.
+
+### Why These Metrics Matter
+
+**Imbalanced datasets.** Fraud detection datasets typically have far fewer fraudulent transactions (often 1–5%) than legitimate ones. In such imbalanced settings, *accuracy is misleading*: a model that predicts "legitimate" for everything can achieve 95%+ accuracy while missing all fraud. We prioritize Precision, Recall, and F1-score instead of accuracy.
+
+**Why recall matters.** Recall (True Positives / (True Positives + False Negatives)) measures what fraction of actual frauds we catch. In fraud detection, missing a fraudulent transaction (false negative) is often costlier than flagging a legitimate one (false positive). Low recall means fraud slips through; high recall reduces financial loss and customer trust issues. We balance recall with precision to avoid too many false alarms.
+
+**False positives vs false negatives.** *False positive*: A legitimate transaction wrongly flagged as fraud. Impact: customer friction, blocked payments, support load, lost revenue. *False negative*: A fraudulent transaction wrongly allowed. Impact: direct financial loss, chargebacks, regulatory risk, reputational damage. For UPI fraud, false negatives are typically more costly. We use F1-score to balance both, and ROC-AUC to assess ranking quality across thresholds.
+
+**Why moderate recall (~48%) is acceptable.** Moderate recall reduces false alarms: chasing very high recall often means lowering the decision threshold, which sharply increases false positives. Too many false alarms overload support, frustrate customers, and block legitimate payments. A ~48% recall balances catching fraud with manageable alert volume.
+
+**Threshold trade-off.** Raising the decision threshold increases precision and lowers recall; lowering it does the opposite.
+
+### Metric definitions
+
+| Metric | Definition |
+|--------|------------|
+| **Precision** | Of transactions flagged as fraud, how many were actually fraud? |
+| **Recall** | Of all actual frauds, how many did we catch? Moderate recall (~48%) limits false alarms. |
+| **F1-score** | Harmonic mean of precision and recall; balances both. |
+| **ROC-AUC** | Model's *discrimination ability* across thresholds—how well it ranks fraud vs legitimate—not an accuracy indicator. |
+| **Accuracy** | Fraction of correct predictions. Less reliable for imbalanced fraud datasets. |
+| **Confusion matrix** | TN, FP, FN, TP heatmap for the selected model (saved during training). |
+
+### Selected model: Random Forest
+
+Random Forest is the final selected model based on balanced Precision and Recall. It provides good F1-score and ROC-AUC, handles imbalanced data well, and supports feature importance for explainability. The LLM module adds human-readable reasoning for medium/high-risk cases; it is not a classifier.
+
+### ML classifiers vs LLM explanation module
+
+| Aspect | ML classifiers (e.g., Random Forest) | LLM explanation module (Groq) |
+|--------|-------------------------------------|-------------------------------|
+| **Strengths** | Fast inference (~30ms), consistent behavior, no API dependency, scales to high throughput, classifies fraud and produces risk scores | Natural-language explanations, aligns with model features, useful for compliance and dispute resolution, invoked only for medium/high risk (cost-efficient), adds interpretability |
+| **Limitations** | No human-readable reasoning, black-box, fixed feature set | Slower (~2–5s per call), requires API key and incurs cost, non-deterministic |
+
+**Recommendation.** Use ML classifiers for real-time fraud classification. Use the LLM explanation module to generate human-readable reasoning for medium/high-risk cases. The LLM is not a classifier; it explains why a transaction was flagged.
 
 ---
 
@@ -143,6 +186,8 @@ The system is a **risk assessment framework**, not a binary classifier:
 | **ml_prediction** | Produces fraud probability (0–1) from the trained model |
 | **risk_engine** | Converts probability → risk score → risk level → decision |
 | **llm_explanation** | Generates rule-based or LLM-based explanations |
+| **confusion_matrix_store** | Persists and loads confusion matrix for the selected model (SRP) |
+| **metrics_analysis** | Provides explanatory text for precision, recall, ROC-AUC, and threshold trade-offs |
 
 **Threshold configuration:**
 
@@ -160,6 +205,8 @@ The system is a **risk assessment framework**, not a binary classifier:
 - **Threshold dependency**: Risk levels and actions (allow/review/block) depend on configurable thresholds. Suboptimal thresholds can over-block legitimate transactions or under-flag fraud. Thresholds should be tuned per deployment context.
 
 - **LLM latency and cost**: LLM reasoning adds hundreds of milliseconds per request and consumes API credits. It is intended as an optional, on-demand layer for medium/high-risk cases, not for every transaction.
+
+- **Moderate recall by design**: The selected model targets ~48% recall to limit false alarms. Chasing very high recall would lower the decision threshold and increase false positives, overloading support and blocking legitimate payments. See dashboard tooltips for details.
 
 - **Academic scope**: This project is for learning and demonstration. It is not audited for production use, regulatory compliance, or security hardening.
 
@@ -205,8 +252,9 @@ The system is a **risk assessment framework**, not a binary classifier:
 │  [2] Feature engineering + preprocess → save preprocessor                │
 │  [3] Train/validate/test 5 ML models → pick best by F1                   │
 │  [4] Save best model (models/best_model_*.pkl + best_model_random_forest)│
-│  [5] (Optional) Run LLM on sample → save (results/llm_predictions.csv)   │
-│  [6] Save metrics & plots (results/model_performance.csv, *.png)         │
+│  [5] Save confusion matrix (results/confusion_matrix.json, *.png)        │
+│  [6] (Optional) Run LLM on sample → save (results/llm_predictions.csv)   │
+│  [7] Save metrics & plots (results/model_performance.csv, *.png)         │
 └─────────────────────────────────────────────────────────────────────────┘
                     │
                     ▼
@@ -416,7 +464,8 @@ cd src && python app.py
 ### Access
 
 - **Dashboard:** [http://localhost:5000](http://localhost:5000)  
-- **Health:** [http://localhost:5000/health](http://localhost:5000/health)
+- **Health:** [http://localhost:5000/health](http://localhost:5000/health)  
+- **Confusion matrix API:** [http://localhost:5000/api/confusion_matrix](http://localhost:5000/api/confusion_matrix) (JSON: `{matrix, model}`)
 
 ---
 
@@ -467,6 +516,7 @@ UPI-FRAUD-DETECTION/
 │   ├── llm_fraud_detector.py
 │   ├── explanation_generator.py
 │   ├── feature_importance_store.py
+│   ├── confusion_matrix_store.py
 │   ├── prediction_service.py
 │   ├── prediction_store.py
 │   ├── prediction_logger.py
@@ -489,7 +539,7 @@ UPI-FRAUD-DETECTION/
 └── README.md
 ```
 
-**Ignored by .gitignore:** `bin/`, `logs/`, `venv/`, `data/*.csv`, `models/*.pkl`, `results/*.csv`, `results/*.png`, `results/*.json`, `*.log`.
+**Ignored by .gitignore:** `bin/`, `logs/`, `venv/`, `data/*.csv`, `models/*.pkl`, `results/*.csv`, `results/*.png`, `results/confusion_matrix.json`, `*.log`.
 
 **Note:** LLM setup (Groq API key, `.env`) is in [Configuration](#configuration) above. To test LLM: `cd src && python demo_llm.py` (or use the dashboard’s “Analyze with LLM”).
 
@@ -497,7 +547,9 @@ UPI-FRAUD-DETECTION/
 
 ## Changelog Summary
 
-- Training now saves `best_model_random_forest.pkl` for dashboard compatibility.
+- **Confusion matrix**: Visualization in dashboard for selected model; `ConfusionMatrixStore` saves/loads `results/confusion_matrix.json`; `/api/confusion_matrix` endpoint.
+- **Metrics explanations**: Tooltips for moderate recall (~48%) acceptable to avoid false alarms; one-line threshold trade-off (precision vs recall); ROC-AUC described as discrimination ability, not accuracy.
+- Training now saves `best_model_random_forest.pkl` and confusion matrix JSON for dashboard compatibility.
 - Paths resolved from project root; app starts even if models are missing (503 until trained).
 - Feature importance, LLM samples, and model names fixed for frontend.
 - ROC-AUC added for LLM metrics; prediction logger and latency measurement added.

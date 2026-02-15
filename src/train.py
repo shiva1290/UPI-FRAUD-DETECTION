@@ -25,6 +25,7 @@ from preprocessor import UPIPreprocessor
 from models import FraudDetectionModel, ModelComparison
 from llm_detector import LLMFraudDetector
 from feature_importance_store import FeatureImportanceStore
+from confusion_matrix_store import ConfusionMatrixStore
 
 def main(use_llm=False):
     """Main training pipeline with LLM comparison"""
@@ -179,27 +180,9 @@ def main(use_llm=False):
             # Show sample predictions with reasoning
             llm_detector.analyze_sample_predictions(llm_results, n_samples=3)
             
-            # Add LLM metrics to comparison (include ROC-AUC from confidence scores)
+            # LLM is an explanation module, not a classifier - do not add to ML comparison
             if hasattr(llm_detector, 'metrics'):
-                from sklearn.metrics import roc_auc_score
-                y_true = llm_results['actual_is_fraud'].values
-                # Use LLM confidence as probability of positive class (fraud) for ROC-AUC
-                y_score = (llm_results['llm_confidence'] / 100.0).values
-                roc_auc = 0.0
-                if len(np.unique(y_true)) > 1 and len(y_true) > 0:
-                    try:
-                        roc_auc = roc_auc_score(y_true, y_score)
-                    except Exception:
-                        pass
-                comparison.results['llm_groq'] = {
-                    'accuracy': llm_detector.metrics['accuracy'],
-                    'precision': llm_detector.metrics['precision'],
-                    'recall': llm_detector.metrics['recall'],
-                    'f1_score': llm_detector.metrics['f1_score'],
-                    'roc_auc': roc_auc,
-                    'confusion_matrix': None
-                }
-                print("\n✓ LLM metrics added to comparison")
+                print("\n✓ LLM explanation module metrics computed (not shown in classifier table)")
             
         except ValueError as e:
             print(f"\n⚠️  Skipping LLM detection: {e}")
@@ -231,6 +214,9 @@ def main(use_llm=False):
         X_test, y_test, 
         save_path=f'../results/confusion_matrix_{best_model_name}.png'
     )
+    cm = best_ml_model.performance_metrics.get('confusion_matrix')
+    if cm is not None:
+        ConfusionMatrixStore.save(cm.tolist(), best_model_name, '../results/confusion_matrix.json')
     best_ml_model.plot_roc_curve(
         X_test, y_test,
         save_path=f'../results/roc_curve_{best_model_name}.png'
@@ -261,30 +247,10 @@ def main(use_llm=False):
             print(f"  {metric.capitalize()}: {value:.4f}")
     
     if llm_detector and hasattr(llm_detector, 'metrics'):
-        print(f"\n🤖 LLM-BASED DETECTION (Groq API)")
+        print(f"\n🤖 LLM EXPLANATION MODULE (Groq API)")
         print("-"*70)
-        for metric, value in llm_detector.metrics.items():
-            if metric != 'avg_processing_time':
-                print(f"  {metric.capitalize()}: {value:.4f}")
-            else:
-                print(f"  Avg Processing Time: {value:.3f}s per transaction")
-        
-        # Compare ML vs LLM
-        print(f"\n📈 ML vs LLM COMPARISON")
-        print("-"*70)
-        ml_f1 = best_ml_model.performance_metrics['f1_score']
-        llm_f1 = llm_detector.metrics['f1_score']
-        
-        if ml_f1 > llm_f1:
-            print(f"  ML Model performs better (F1: {ml_f1:.4f} vs {llm_f1:.4f})")
-            print(f"  Advantage: +{(ml_f1-llm_f1)*100:.2f}%")
-        else:
-            print(f"  LLM performs better (F1: {llm_f1:.4f} vs {ml_f1:.4f})")
-            print(f"  Advantage: +{(llm_f1-ml_f1)*100:.2f}%")
-        
-        print(f"\n  💡 Hybrid Approach Recommended:")
-        print(f"     Use ML for real-time detection (faster)")
-        print(f"     Use LLM for explaining flagged transactions (more interpretable)")
+        print("  LLM is an explanation module, not a classifier.")
+        print("  It provides human-readable reasoning for medium/high-risk transactions.")
     
     print("\n" + "="*70)
     print(f"📁 OUTPUT FILES:")

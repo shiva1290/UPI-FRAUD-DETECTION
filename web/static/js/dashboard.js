@@ -4,6 +4,7 @@
 document.addEventListener('DOMContentLoaded', function() {
     loadStats();
     loadModelPerformance();
+    loadConfusionMatrix();
     loadHourlyFraud();
     loadFeatureImportance();
     loadRecentPredictions();
@@ -53,23 +54,33 @@ async function loadModelPerformance() {
                 bestModel = row;
             }
             
-            const rawName = (model.model || '').trim();
+            const rawName = (model.model || '').trim().toLowerCase();
             const modelName = rawName
                 ? rawName.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
                 : 'Unknown';
             
+            // Highlight Random Forest as the selected model (balanced Precision & Recall)
+            const isRandomForest = rawName === 'random_forest';
+            if (isRandomForest) {
+                row.classList.add('selected-model');
+            }
+            if (model.f1_score === bestF1 && !row.classList.contains('selected-model')) {
+                row.classList.add('best-model');
+            }
+            
+            // Column order: Precision, Recall, F1, ROC-AUC, Accuracy (accuracy last)
             row.innerHTML = `
-                <td><span class="model-name">${modelName}</span></td>
-                <td>${(model.accuracy * 100).toFixed(2)}%</td>
+                <td><span class="model-name">${modelName}${isRandomForest ? ' <span class="selected-badge">Selected</span>' : ''}</span></td>
                 <td>${(model.precision * 100).toFixed(2)}%</td>
                 <td>${(model.recall * 100).toFixed(2)}%</td>
                 <td>${(model.f1_score * 100).toFixed(2)}%</td>
                 <td>${model.roc_auc ? (model.roc_auc * 100).toFixed(2) + '%' : 'N/A'}</td>
+                <td class="accuracy-cell">${(model.accuracy * 100).toFixed(2)}%</td>
             `;
             tbody.appendChild(row);
         });
         
-        if (bestModel) {
+        if (bestModel && !bestModel.classList.contains('selected-model')) {
             bestModel.classList.add('best-model');
         }
         
@@ -83,13 +94,6 @@ async function loadModelPerformance() {
             data: {
                 labels: models.map(m => formatModelLabel(m.model)),
                 datasets: [
-                    {
-                        label: 'Accuracy',
-                        data: models.map(m => m.accuracy * 100),
-                        backgroundColor: 'rgba(99, 102, 241, 0.8)',
-                        borderColor: 'rgba(99, 102, 241, 1)',
-                        borderWidth: 2
-                    },
                     {
                         label: 'Precision',
                         data: models.map(m => m.precision * 100),
@@ -110,6 +114,20 @@ async function loadModelPerformance() {
                         backgroundColor: 'rgba(239, 68, 68, 0.8)',
                         borderColor: 'rgba(239, 68, 68, 1)',
                         borderWidth: 2
+                    },
+                    {
+                        label: 'ROC-AUC',
+                        data: models.map(m => (m.roc_auc != null ? m.roc_auc : 0) * 100),
+                        backgroundColor: 'rgba(99, 102, 241, 0.8)',
+                        borderColor: 'rgba(99, 102, 241, 1)',
+                        borderWidth: 2
+                    },
+                    {
+                        label: 'Accuracy',
+                        data: models.map(m => m.accuracy * 100),
+                        backgroundColor: 'rgba(156, 163, 175, 0.6)',
+                        borderColor: 'rgba(156, 163, 175, 1)',
+                        borderWidth: 2
                     }
                 ]
             },
@@ -122,7 +140,7 @@ async function loadModelPerformance() {
                     },
                     title: {
                         display: true,
-                        text: 'Model Performance Metrics (%)',
+                        text: 'ML Classifier Metrics: Precision, Recall, F1 (primary)',
                         font: { size: 16, weight: 'bold' }
                     }
                 },
@@ -137,6 +155,46 @@ async function loadModelPerformance() {
         
     } catch (error) {
         console.error('Error loading model performance:', error);
+    }
+}
+
+// Load confusion matrix for selected model
+async function loadConfusionMatrix() {
+    try {
+        const response = await fetch('/api/confusion_matrix');
+        const data = await response.json();
+        const container = document.getElementById('confusionMatrixContainer');
+        const grid = document.getElementById('confusionMatrixGrid');
+        const modelSpan = document.getElementById('confusionMatrixModel');
+        if (!data || !data.matrix) {
+            container.style.display = 'none';
+            return;
+        }
+        const m = data.matrix;
+        const modelName = (data.model || 'unknown').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        modelSpan.textContent = '(' + modelName + ')';
+        grid.innerHTML = `
+            <table class="confusion-matrix-table">
+                <thead>
+                    <tr><th></th><th>Predicted Legit</th><th>Predicted Fraud</th></tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <th>Actual Legit</th>
+                        <td class="cm-cell tn" title="True Negatives">${m[0][0]}</td>
+                        <td class="cm-cell fp" title="False Positives">${m[0][1]}</td>
+                    </tr>
+                    <tr>
+                        <th>Actual Fraud</th>
+                        <td class="cm-cell fn" title="False Negatives">${m[1][0]}</td>
+                        <td class="cm-cell tp" title="True Positives">${m[1][1]}</td>
+                    </tr>
+                </tbody>
+            </table>
+        `;
+        container.style.display = 'block';
+    } catch (error) {
+        console.error('Error loading confusion matrix:', error);
     }
 }
 
@@ -521,7 +579,6 @@ function displayPrediction(result, source) {
     const explanation = result.explanation || null;
     const showLLMButton = result.suggest_llm && !result.llm_analyzed && result.id;
     const isRisky = (riskLevel === 'Medium' || riskLevel === 'High');
-    const contributingFeatures = result.contributing_features || [];
     const riskFactors = result.risk_factors || [];
     const riskColor = getRiskColor(riskLevel);
     const mlLatency = result.ml_latency_ms;
@@ -559,20 +616,12 @@ function displayPrediction(result, source) {
                     <span class="llm-cta-hint">Optional: Get human-readable reasoning for this ${riskLevel} risk transaction</span>
                 </div>
             ` : ''}
-            ${(explanation || contributingFeatures.length > 0 || riskFactors.length > 0) ? `
+            ${(explanation || riskFactors.length > 0) ? `
                 <div class="explanation-section ${isRisky ? 'risky' : ''}">
                     <h4 class="explanation-section-title">Decision Rationale</h4>
                     ${explanation ? `
                         <div class="explanation-box">
                             <p>${String(explanation).replace(/\n/g, '<br>')}</p>
-                        </div>
-                    ` : ''}
-                    ${contributingFeatures.length > 0 ? `
-                        <div class="contributing-features">
-                            <strong>Contributing Factors:</strong>
-                            <div class="factor-tags">
-                                ${contributingFeatures.map(f => `<span class="factor-tag">• ${f}</span>`).join('')}
-                            </div>
                         </div>
                     ` : ''}
                     ${riskFactors.length > 0 ? `

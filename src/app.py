@@ -27,6 +27,7 @@ from risk_engine import RiskEngine
 from prediction_service import run_risk_based_prediction
 from ml_prediction import predict_fraud_probability
 from feature_importance_store import FeatureImportanceStore
+from confusion_matrix_store import ConfusionMatrixStore
 from explanation_generator import ExplanationGenerator
 from metrics_analysis import get_metrics_guide, get_ml_vs_llm_comparison
 from prediction_store import append as store_append, find_by_id as store_find, get_recent as store_get_recent
@@ -222,6 +223,9 @@ try:
             if not model_name:
                 model_name = 'unknown'
             row['model'] = model_name
+            # Exclude LLM from ML classifier comparison (LLM is explanation module, not a classifier)
+            if str(model_name).lower().startswith('llm') or 'llm' in str(model_name).lower():
+                continue
             # Ensure numeric fields are numbers for JSON/charts
             for key in _metric_keys:
                 if key in row and row[key] not in ('', None):
@@ -547,6 +551,18 @@ def get_recent_predictions():
 def get_model_performance():
     """Get model performance metrics"""
     return jsonify(model_performance)
+
+@app.route('/api/confusion_matrix')
+@handle_errors
+@rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
+def get_confusion_matrix():
+    """Get confusion matrix for the selected model. Returns {matrix, model} or null."""
+    path = os.path.join(_APP_BASE, 'results', 'confusion_matrix.json')
+    result = ConfusionMatrixStore.load(path)
+    if result is None:
+        return jsonify(None)
+    matrix, model_name = result
+    return jsonify({'matrix': matrix, 'model': model_name})
 
 @app.errorhandler(404)
 def not_found(e):
