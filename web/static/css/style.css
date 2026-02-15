@@ -510,6 +510,106 @@ body {
     margin-top: 1rem;
 }
 
+/* Risk-based prediction */
+.prediction-badge.risk-level-low {
+    background: rgba(16, 185, 129, 0.1);
+    color: var(--success);
+    border-color: var(--success);
+}
+
+.prediction-badge.risk-level-medium {
+    background: rgba(245, 158, 11, 0.1);
+    color: #d97706;
+    border-color: #d97706;
+}
+
+.prediction-badge.risk-level-high {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--danger);
+    border-color: var(--danger);
+}
+
+.risk-score-bar {
+    position: relative;
+    width: 100%;
+    height: 2rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 1rem 0;
+}
+
+.risk-score-fill {
+    height: 100%;
+    background: var(--gradient-primary);
+    border-radius: 8px;
+    transition: width 0.5s;
+}
+
+.risk-score-value {
+    position: absolute;
+    right: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-weight: 700;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+}
+
+.action-badge {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    margin: 0.5rem 0;
+    border: 2px solid;
+}
+
+.action-badge.action-allow {
+    background: rgba(16, 185, 129, 0.1);
+    color: var(--success);
+    border-color: var(--success);
+}
+
+.action-badge.action-review {
+    background: rgba(245, 158, 11, 0.1);
+    color: #d97706;
+    border-color: #d97706;
+}
+
+.action-badge.action-block {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--danger);
+    border-color: var(--danger);
+}
+
+.explanation-box {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: var(--light);
+    border-radius: 0.5rem;
+    text-align: left;
+}
+
+.explanation-box p {
+    margin-top: 0.5rem;
+    line-height: 1.6;
+    color: var(--text-primary);
+}
+
+.risk-factors {
+    margin-top: 1rem;
+    text-align: left;
+}
+
+.risk-factors .factor-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
 /* LLM Samples */
 .llm-samples {
     display: grid;

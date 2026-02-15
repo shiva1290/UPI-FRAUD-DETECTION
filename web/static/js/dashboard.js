@@ -407,59 +407,49 @@ function buildTransactionData() {
     };
 }
 
-// Display ML prediction result
+// Display prediction result (risk-based: risk_score, risk_level, action, explanation)
 function displayPrediction(result, source) {
     const resultDiv = document.getElementById('predictionResult');
-    resultDiv.innerHTML = `
-        <div class="prediction-card">
-            <div style="font-size: 0.875rem; color: var(--text-light); margin-bottom: 1rem;">
-                ${source} Prediction
-            </div>
-            <div class="prediction-badge ${result.prediction.toLowerCase()}">
-                ${result.prediction === 'FRAUD' ? '⚠️' : '✅'} ${result.prediction}
-            </div>
-            <div class="probability-bar">
-                <div class="probability-fill" style="width: ${result.probability * 100}%">
-                    ${(result.probability * 100).toFixed(1)}%
-                </div>
-            </div>
-            <div class="risk-level">
-                Risk Level: <strong>${result.risk_level}</strong>
-            </div>
-        </div>
-    `;
-}
+    const riskScore = result.risk_score != null ? result.risk_score : (result.probability != null ? result.probability * 100 : 0);
+    const riskLevel = result.risk_level || 'Unknown';
+    const action = result.action || 'allow';
+    const actionBadge = action === 'block' ? 'block' : (action === 'review' ? 'review' : 'allow');
+    const explanation = result.explanation || (riskLevel === 'Low' ? 'Transaction appears low risk. No LLM analysis triggered.' : null);
 
-// Display LLM prediction with reasoning
-function displayLLMPrediction(result) {
-    const resultDiv = document.getElementById('predictionResult');
-    const riskFactors = result.risk_factors || [];
-    
     resultDiv.innerHTML = `
         <div class="prediction-card">
             <div style="font-size: 0.875rem; color: var(--text-light); margin-bottom: 1rem;">
-                🤖 LLM Analysis (Groq API)
+                ${source} Risk Assessment
             </div>
-            <div class="prediction-badge ${result.prediction.toLowerCase()}">
-                ${result.prediction === 'FRAUD' ? '⚠️' : '✅'} ${result.prediction}
+            <div class="prediction-badge risk-level-${riskLevel.toLowerCase()}">
+                Risk: <strong>${riskLevel}</strong>
             </div>
-            <div class="probability-bar">
-                <div class="probability-fill" style="width: ${result.confidence * 100}%">
-                    ${(result.confidence * 100).toFixed(0)}% Confidence
+            <div class="risk-score-bar">
+                <div class="risk-score-fill" style="width: ${Math.min(riskScore, 100)}%"></div>
+                <span class="risk-score-value">${riskScore.toFixed(1)}</span>
+            </div>
+            <div class="action-badge action-${actionBadge}">
+                Action: <strong>${action.toUpperCase()}</strong>
+            </div>
+            ${explanation ? `
+                <div class="explanation-box">
+                    <strong>💡 Explanation:</strong>
+                    <p>${explanation}</p>
                 </div>
-            </div>
-            <div style="margin-top: 1.5rem; padding: 1rem; background: var(--light); border-radius: 0.5rem;">
-                <strong>💡 Reasoning:</strong>
-                <p style="margin-top: 0.5rem; line-height: 1.6;">${result.reasoning}</p>
-            </div>
-            ${riskFactors.length > 0 ? `
-                <div style="margin-top: 1rem;">
+            ` : ''}
+            ${(result.risk_factors || []).length > 0 ? `
+                <div class="risk-factors">
                     <strong>🚨 Risk Factors:</strong>
-                    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
-                        ${riskFactors.map(f => `<span class="factor-tag">• ${f}</span>`).join('')}
+                    <div class="factor-tags">
+                        ${(result.risk_factors || []).map(f => `<span class="factor-tag">• ${f}</span>`).join('')}
                     </div>
                 </div>
             ` : ''}
         </div>
     `;
+}
+
+// Display LLM prediction (uses same risk format: risk_score, risk_level, explanation)
+function displayLLMPrediction(result) {
+    displayPrediction(result, '🤖 LLM (Groq API)');
 }
