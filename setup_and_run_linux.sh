@@ -1,8 +1,8 @@
 # UPI Fraud Detection - Setup & Run (Linux)
-# Usage: ./bin/setup_and_run_linux.sh  OR  from project root: bin/setup_and_run_linux.sh
+# Usage: ./setup_and_run_linux.sh  (run from project root)
 
 set -e
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
 echo "======================================================================"

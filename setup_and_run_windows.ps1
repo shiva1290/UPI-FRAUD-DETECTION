@@ -1,8 +1,8 @@
 # UPI Fraud Detection - Setup & Run (Windows PowerShell)
-# Usage: .\bin\setup_and_run_windows.ps1
+# Usage: .\setup_and_run_windows.ps1  (run from project root)
 
 $ErrorActionPreference = "Stop"
-$ROOT = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$ROOT = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ROOT
 
 Write-Host "======================================================================"

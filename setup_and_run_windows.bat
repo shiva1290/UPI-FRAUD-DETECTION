@@ -1,8 +1,8 @@
 @echo off
 REM UPI Fraud Detection - Setup & Run (Windows)
-REM Usage: bin\setup_and_run_windows.bat
+REM Usage: setup_and_run_windows.bat  (run from project root)
 
-cd /d "%~dp0\.."
+cd /d "%~dp0"
 
 echo ======================================================================
 echo  UPI FRAUD DETECTION - SETUP ^& RUN (Windows)

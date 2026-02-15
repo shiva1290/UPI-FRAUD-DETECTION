@@ -347,39 +347,34 @@ Use the script for your operating system. Each script: creates a virtual environ
 
 ### Option 1: One-command setup and run
 
+Setup scripts are at **project root** (not in `bin/`). Run from project root:
+
 **Linux:**
 
 ```bash
-chmod +x bin/setup_and_run_linux.sh
-./bin/setup_and_run_linux.sh
+chmod +x setup_and_run_linux.sh
+./setup_and_run_linux.sh
 ```
 
 **macOS:**
 
 ```bash
-chmod +x bin/setup_and_run_mac.sh
-./bin/setup_and_run_mac.sh
+chmod +x setup_and_run_mac.sh
+./setup_and_run_mac.sh
 ```
 
 **Windows:**
 
-**Command Prompt:** run:
+**Command Prompt:**
 ```cmd
-bin\setup_and_run_windows.bat
+setup_and_run_windows.bat
 ```
 
 **PowerShell:** (if execution policy allows)
 ```powershell
-.\bin\setup_and_run_windows.ps1
+.\setup_and_run_windows.ps1
 ```
 If you see an execution policy error, run once: `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`
-
-**Generic Unix (Linux/macOS):**
-
-```bash
-chmod +x bin/setup_and_run.sh
-./bin/setup_and_run.sh
-```
 
 This will: create venv if missing, install dependencies, train models (with LLM if `GROQ_API_KEY` is in `.env`), then start the dashboard.
 
@@ -398,8 +393,7 @@ cd src && python train.py && cd ..
 cd src && python train.py --with-llm && cd ..
 
 # Start dashboard
-./bin/start_dashboard.sh
-# Or: cd src && python app.py
+cd src && python app.py
 ```
 
 **Windows (PowerShell):**
@@ -445,12 +439,13 @@ python test_api.py
 
 ## Project Structure
 
+Structure below reflects **tracked files**. `bin/`, `logs/`, `venv/` and generated files are in [.gitignore](.gitignore).
+
 ```
 UPI-FRAUD-DETECTION/
-├── data/                    # Datasets (e.g. upi_transactions.csv)
-├── models/                  # Saved model and preprocessor (.pkl)
-├── results/                 # model_performance.csv, plots, llm_predictions.csv
-├── logs/                    # Prediction logs (prediction_logs.jsonl)
+├── data/                    # Datasets (data/*.csv gitignored; .gitkeep, kaggle_dataset_paths.txt tracked)
+├── models/                  # Saved model and preprocessor (models/*.pkl gitignored)
+├── results/                 # Metrics and plots (results/*.csv, *.png gitignored; .gitkeep tracked)
 ├── src/                     # Backend and training
 │   ├── app.py              # Flask API and dashboard server
 │   ├── config.py           # Configuration from .env
@@ -462,29 +457,41 @@ UPI-FRAUD-DETECTION/
 │   ├── llm_explanation.py  # Rule-based or LLM explanations
 │   ├── models.py           # ML model definitions and comparison
 │   ├── llm_detector.py     # Groq-based LLM fraud detector
-│   ├── data_generator.py   # Synthetic UPI data generation
-│   └── test_api.py         # API tests
+│   ├── data_generator.py
+│   ├── download_datasets.py
+│   ├── demo_llm.py
+│   ├── abstractions.py
+│   ├── decision_layer.py
+│   ├── risk_scoring.py
+│   ├── llm_client.py
+│   ├── llm_fraud_detector.py
+│   ├── explanation_generator.py
+│   ├── feature_importance_store.py
+│   ├── prediction_service.py
+│   ├── prediction_store.py
+│   ├── prediction_logger.py
+│   ├── transaction_validator.py
+│   ├── model_registry.py
+│   ├── model_visualizer.py
+│   ├── metrics_analysis.py
+│   └── test_api.py
 ├── web/
 │   ├── static/             # CSS, JS (e.g. dashboard.js)
 │   └── templates/          # HTML (e.g. index.html)
-├── .env.example            # Example environment variables
+├── setup_and_run_linux.sh
+├── setup_and_run_mac.sh
+├── setup_and_run_windows.bat
+├── setup_and_run_windows.ps1
+├── .env.example
 ├── .env                    # Your config (do not commit)
-├── requirements.txt        # Python dependencies
-├── bin/                    # Scripts (run from project root)
-│   ├── setup_and_run_linux.sh
-│   ├── setup_and_run_mac.sh
-│   ├── setup_and_run.sh
-│   ├── setup_and_run_windows.bat
-│   ├── setup_and_run_windows.ps1
-│   ├── start_dashboard.sh
-│   ├── run.sh
-│   ├── demo_llm.sh
-│   ├── ARCHITECTURE.md     # Detailed architecture (archived)
-│   └── CHANGELOG.md        # Full changelog (archived)
-└── README.md               # This file
+├── requirements.txt
+├── LICENSE
+└── README.md
 ```
 
-**Note:** LLM setup (Groq API key, `.env`) is in [Configuration](#configuration) above. To test LLM from the command line, run from project root: `./bin/demo_llm.sh` or `cd src && python demo_llm.py` (or use the dashboard’s “Analyze with LLM”).
+**Ignored by .gitignore:** `bin/`, `logs/`, `venv/`, `data/*.csv`, `models/*.pkl`, `results/*.csv`, `results/*.png`, `results/*.json`, `*.log`.
+
+**Note:** LLM setup (Groq API key, `.env`) is in [Configuration](#configuration) above. To test LLM: `cd src && python demo_llm.py` (or use the dashboard’s “Analyze with LLM”).
 
 ---
 
@@ -497,7 +504,7 @@ UPI-FRAUD-DETECTION/
 - Risk gauge, latency comparison, and prediction logs for fraud pattern analysis.
 - API key handling and security improvements; setup scripts for Linux, macOS, Windows.
 
-Full changelog: [bin/CHANGELOG.md](bin/CHANGELOG.md)
+*(Full changelog available in `bin/CHANGELOG.md` when present locally; `bin/` is gitignored.)*
 
 ---
 
