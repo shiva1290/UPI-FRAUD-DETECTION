@@ -24,7 +24,7 @@
                     <span class="stat-label">Total Transactions</span>
                     <span class="stat-value" id="totalTransactions">-</span>
                 </div>
-                <div class="stat-pill fraud">
+                <div class="stat-pill fraud" title="{{ metrics_guide.false_positives_vs_false_negatives.content }}">
                     <span class="stat-label">Fraud Detected</span>
                     <span class="stat-value" id="fraudCount">-</span>
                 </div>
@@ -69,96 +69,34 @@
                 </div>
             </div>
 
-            <!-- Model Performance -->
+            <!-- Model Performance (ML classifiers only; LLM is explanation module) -->
             <div class="section">
-                <h2 class="section-title">Model Performance Comparison</h2>
+                <h2 class="section-title">
+                    ML Classifier Comparison
+                    <span class="info-icon" title="{{ metrics_guide.imbalanced_dataset.content }} {{ metrics_guide.selected_model.content }}">ⓘ</span>
+                </h2>
                 <div class="chart-container">
                     <canvas id="modelPerformanceChart"></canvas>
+                </div>
+                <div class="confusion-matrix-container" id="confusionMatrixContainer" style="display:none;">
+                    <h3 class="confusion-matrix-title">Confusion Matrix <span id="confusionMatrixModel" class="model-badge"></span></h3>
+                    <div class="confusion-matrix-grid" id="confusionMatrixGrid"></div>
                 </div>
                 <div class="model-table-container">
                     <table class="model-table" id="modelTable">
                         <thead>
                             <tr>
                                 <th>Model</th>
-                                <th>Accuracy</th>
-                                <th>Precision</th>
-                                <th>Recall</th>
-                                <th>F1-Score</th>
-                                <th>ROC-AUC</th>
+                                <th class="hoverable" title="{{ metrics_guide.metrics_definitions.precision }} {{ metrics_guide.threshold_tradeoff }}">Precision</th>
+                                <th class="hoverable" title="{{ metrics_guide.metrics_definitions.recall }} {{ metrics_guide.moderate_recall.content }}">Recall</th>
+                                <th class="hoverable" title="{{ metrics_guide.metrics_definitions.f1_score }}">F1-Score</th>
+                                <th class="hoverable" title="{{ metrics_guide.metrics_definitions.roc_auc }}">ROC-AUC</th>
+                                <th class="hoverable" title="Fraction of correct predictions. Less reliable for imbalanced fraud datasets.">Accuracy</th>
                             </tr>
                         </thead>
                         <tbody id="modelTableBody">
                         </tbody>
                     </table>
-                </div>
-
-                <!-- Metrics Guide: Recall importance, FP vs FN -->
-                <div class="metrics-guide section-inner">
-                    <h3 class="metrics-guide-title">{{ metrics_guide.title }}</h3>
-                    <div class="metrics-guide-grid">
-                        <div class="metrics-guide-card">
-                            <h4>{{ metrics_guide.recall_importance.heading }}</h4>
-                            <p>{{ metrics_guide.recall_importance.content }}</p>
-                        </div>
-                        <div class="metrics-guide-card">
-                            <h4>{{ metrics_guide.false_positives_vs_false_negatives.heading }}</h4>
-                            <p>{{ metrics_guide.false_positives_vs_false_negatives.content }}</p>
-                        </div>
-                    </div>
-                    <div class="metrics-definitions">
-                        <h4>Quick definitions</h4>
-                        <ul>
-                            <li><strong>Precision:</strong> {{ metrics_guide.metrics_definitions.precision }}</li>
-                            <li><strong>Recall:</strong> {{ metrics_guide.metrics_definitions.recall }}</li>
-                            <li><strong>F1-score:</strong> {{ metrics_guide.metrics_definitions.f1_score }}</li>
-                        </ul>
-                    </div>
-                </div>
-
-                <!-- ML vs ML+LLM qualitative comparison -->
-                <div class="ml-llm-comparison section-inner">
-                    <h3 class="section-subtitle">{{ ml_llm_comparison.title }}</h3>
-                    <div class="comparison-grid">
-                        <div class="comparison-card ml-only">
-                            <h4>{{ ml_llm_comparison.ml_only.heading }}</h4>
-                            <div class="comparison-list">
-                                <span class="list-label">Strengths</span>
-                                <ul>
-                                    {% for s in ml_llm_comparison.ml_only.strengths %}
-                                    <li>{{ s }}</li>
-                                    {% endfor %}
-                                </ul>
-                            </div>
-                            <div class="comparison-list">
-                                <span class="list-label">Limitations</span>
-                                <ul>
-                                    {% for s in ml_llm_comparison.ml_only.limitations %}
-                                    <li>{{ s }}</li>
-                                    {% endfor %}
-                                </ul>
-                            </div>
-                        </div>
-                        <div class="comparison-card ml-llm">
-                            <h4>{{ ml_llm_comparison.ml_plus_llm.heading }}</h4>
-                            <div class="comparison-list">
-                                <span class="list-label">Strengths</span>
-                                <ul>
-                                    {% for s in ml_llm_comparison.ml_plus_llm.strengths %}
-                                    <li>{{ s }}</li>
-                                    {% endfor %}
-                                </ul>
-                            </div>
-                            <div class="comparison-list">
-                                <span class="list-label">Limitations</span>
-                                <ul>
-                                    {% for s in ml_llm_comparison.ml_plus_llm.limitations %}
-                                    <li>{{ s }}</li>
-                                    {% endfor %}
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-                    <p class="comparison-recommendation">{{ ml_llm_comparison.recommendation }}</p>
                 </div>
             </div>
 
@@ -335,9 +273,12 @@
                 </div>
             </div>
 
-            <!-- LLM Samples -->
+            <!-- LLM Explanation Samples -->
             <div class="section">
-                <h2 class="section-title">LLM Predictions with Reasoning</h2>
+                <h2 class="section-title">
+                    LLM Explanation Module: Sample Reasoning
+                    <span class="info-icon" title="{{ ml_llm_comparison.recommendation }}">ⓘ</span>
+                </h2>
                 <div id="llmSamples" class="llm-samples">
                     <div class="loading">Loading LLM predictions...</div>
                 </div>
