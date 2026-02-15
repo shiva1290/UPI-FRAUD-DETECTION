@@ -6,6 +6,7 @@ document.addEventListener('DOMContentLoaded', function() {
     loadModelPerformance();
     loadHourlyFraud();
     loadFeatureImportance();
+    loadRecentPredictions();
     loadRecentTransactions();
     loadLLMSamples();
 });
@@ -232,7 +233,47 @@ async function loadFeatureImportance() {
     }
 }
 
-// Load recent transactions
+// Load recent predictions (from tester) - with optional LLM analyze button
+async function loadRecentPredictions() {
+    try {
+        const response = await fetch('/api/recent_predictions');
+        const predictions = await response.json();
+        
+        const tbody = document.getElementById('recentPredictionsTable');
+        tbody.innerHTML = '';
+        
+        if (!predictions || predictions.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="loading">No predictions yet. Use the tester above.</td></tr>';
+            return;
+        }
+        
+        predictions.slice().reverse().slice(0, 20).forEach(pred => {
+            const row = document.createElement('tr');
+            const td = pred.transaction_data || {};
+            const shortId = (pred.id || '').substring(0, 8);
+            const riskLevel = pred.risk_level || 'Unknown';
+            const showLLMButton = pred.suggest_llm && !pred.llm_analyzed;
+            const decisionMsg = getDecisionMessage(pred.action);
+            row.innerHTML = `
+                <td><code>${shortId}</code></td>
+                <td>₹${Math.round(td.amount || 0).toLocaleString()}</td>
+                <td>${td.hour != null ? td.hour + ':00' : '-'}</td>
+                <td><span class="risk-score-inline">${(pred.risk_score != null ? pred.risk_score.toFixed(1) : '-')}</span></td>
+                <td><span class="status-badge risk-${riskLevel.toLowerCase()}">${riskLevel}</span></td>
+                <td><span class="decision-badge action-${(pred.action || 'allow').toLowerCase()}">${decisionMsg}</span></td>
+                <td>
+                    ${pred.llm_analyzed ? '<span class="llm-done">✓ LLM done</span>' : (showLLMButton ? `<button class="btn-llm-small" onclick="analyzeWithLLM('${pred.id}')">Analyze with LLM</button>` : '-')}
+                </td>
+            `;
+            tbody.appendChild(row);
+        });
+    } catch (error) {
+        console.error('Error loading recent predictions:', error);
+        document.getElementById('recentPredictionsTable').innerHTML = '<tr><td colspan="7" class="loading">Error loading predictions.</td></tr>';
+    }
+}
+
+// Load recent transactions (dataset sample)
 async function loadRecentTransactions() {
     try {
         const response = await fetch('/api/recent_transactions');
@@ -331,12 +372,37 @@ async function testTransaction() {
         
         const result = await response.json();
         
-        // Display result
+        // Display result (includes "Analyze with LLM?" for medium/high)
         displayPrediction(result, 'ML Model');
+        loadRecentPredictions();
         
     } catch (error) {
         console.error('Error testing transaction:', error);
         alert('Error analyzing transaction. Please try again.');
+    }
+}
+
+// Analyze existing prediction with LLM (for medium/high risk)
+async function analyzeWithLLM(predictionId) {
+    if (!confirm('This will use your Groq API credits. Continue?')) {
+        return;
+    }
+    try {
+        const response = await fetch('/api/predict_llm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prediction_id: predictionId })
+        });
+        const result = await response.json();
+        if (result.error) {
+            alert('LLM Error: ' + result.error);
+            return;
+        }
+        displayPrediction(result, result.llm_analyzed ? 'ML + LLM' : 'LLM');
+        loadRecentPredictions();
+    } catch (error) {
+        console.error('Error analyzing with LLM:', error);
+        alert('Error analyzing with LLM. Please try again.');
     }
 }
 
@@ -407,42 +473,116 @@ function buildTransactionData() {
     };
 }
 
-// Display prediction result (risk-based: risk_score, risk_level, action, explanation)
+// Map backend action to user-facing decision message (SRP: single source of truth)
+function getDecisionMessage(action) {
+    const map = { allow: 'Allowed', review: 'Suspicious', block: 'Flagged' };
+    return map[(action || 'allow').toLowerCase()] || action;
+}
+
+// Risk score color for gauge/bar (Low=green, Medium=amber, High=red)
+function getRiskColor(riskLevel) {
+    const map = { low: '#10b981', medium: '#f59e0b', high: '#ef4444' };
+    return map[(riskLevel || '').toLowerCase()] || '#8b5cf6';
+}
+
+// Build SVG semi-circular gauge for risk 0–100
+function buildRiskGaugeSvg(riskScore, riskLevel) {
+    const pct = Math.min(Math.max(riskScore, 0), 100) / 100;
+    const color = getRiskColor(riskLevel);
+    const pathLen = Math.PI * 50;
+    const dashLen = pct * pathLen;
+    return `
+        <svg class="risk-gauge-svg" viewBox="0 0 120 80" preserveAspectRatio="xMidYMid meet">
+            <defs>
+                <linearGradient id="gaugeBg" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#10b981"/>
+                    <stop offset="30%" stop-color="#10b981"/>
+                    <stop offset="30%" stop-color="#f59e0b"/>
+                    <stop offset="70%" stop-color="#f59e0b"/>
+                    <stop offset="70%" stop-color="#ef4444"/>
+                    <stop offset="100%" stop-color="#ef4444"/>
+                </linearGradient>
+            </defs>
+            <path class="gauge-bg" d="M 10 70 A 50 50 0 0 1 110 70" fill="none" stroke="url(#gaugeBg)" stroke-width="10" stroke-linecap="round"/>
+            <path class="gauge-fill" d="M 10 70 A 50 50 0 0 1 110 70" fill="none" stroke="${color}" stroke-width="10" stroke-linecap="round" stroke-dasharray="${dashLen} ${pathLen}"/>
+            <text x="60" y="55" class="gauge-text" text-anchor="middle">${(riskScore || 0).toFixed(0)}</text>
+        </svg>
+    `;
+}
+
+// Display prediction result (risk score + risk level + decision + explanation)
 function displayPrediction(result, source) {
     const resultDiv = document.getElementById('predictionResult');
     const riskScore = result.risk_score != null ? result.risk_score : (result.probability != null ? result.probability * 100 : 0);
     const riskLevel = result.risk_level || 'Unknown';
     const action = result.action || 'allow';
     const actionBadge = action === 'block' ? 'block' : (action === 'review' ? 'review' : 'allow');
-    const explanation = result.explanation || (riskLevel === 'Low' ? 'Transaction appears low risk. No LLM analysis triggered.' : null);
+    const decisionMessage = getDecisionMessage(action);
+    const explanation = result.explanation || null;
+    const showLLMButton = result.suggest_llm && !result.llm_analyzed && result.id;
+    const isRisky = (riskLevel === 'Medium' || riskLevel === 'High');
+    const contributingFeatures = result.contributing_features || [];
+    const riskFactors = result.risk_factors || [];
+    const riskColor = getRiskColor(riskLevel);
+    const mlLatency = result.ml_latency_ms;
+    const llmLatency = result.llm_latency_ms;
+    const latencyHtml = (mlLatency != null || llmLatency != null) ? `
+            <div class="latency-section">
+                <h4 class="latency-title">Latency (ML vs LLM)</h4>
+                <div class="latency-grid">
+                    ${mlLatency != null ? `<div class="latency-item"><span class="latency-label">ML:</span> <strong>${mlLatency} ms</strong></div>` : ''}
+                    ${llmLatency != null ? `<div class="latency-item"><span class="latency-label">LLM:</span> <strong>${llmLatency} ms</strong></div>` : ''}
+                </div>
+                ${(mlLatency != null && llmLatency != null) ? `<div class="latency-comparison">LLM adds ~${Math.round(llmLatency)} ms over ML-only (${mlLatency} ms)</div>` : ''}
+            </div>
+    ` : '';
 
     resultDiv.innerHTML = `
-        <div class="prediction-card">
-            <div style="font-size: 0.875rem; color: var(--text-light); margin-bottom: 1rem;">
-                ${source} Risk Assessment
+        <div class="prediction-card decision-support">
+            <div class="prediction-source">${source} – Risk Assessment</div>
+            <div class="risk-gauge-stack">
+                <div class="risk-gauge-wrapper">${buildRiskGaugeSvg(riskScore, riskLevel)}</div>
+                <div class="risk-level-below">
+                    <span class="prediction-badge risk-level-${riskLevel.toLowerCase()}">${riskLevel}</span>
+                </div>
             </div>
-            <div class="prediction-badge risk-level-${riskLevel.toLowerCase()}">
-                Risk: <strong>${riskLevel}</strong>
+            <div class="decision-message action-${actionBadge}">
+                <span class="decision-label">Decision:</span>
+                <strong>${decisionMessage}</strong>
             </div>
-            <div class="risk-score-bar">
-                <div class="risk-score-fill" style="width: ${Math.min(riskScore, 100)}%"></div>
-                <span class="risk-score-value">${riskScore.toFixed(1)}</span>
-            </div>
-            <div class="action-badge action-${actionBadge}">
-                Action: <strong>${action.toUpperCase()}</strong>
-            </div>
-            ${explanation ? `
-                <div class="explanation-box">
-                    <strong>💡 Explanation:</strong>
-                    <p>${explanation}</p>
+            ${latencyHtml}
+            ${showLLMButton ? `
+                <div class="llm-cta">
+                    <button class="btn-llm-cta" onclick="analyzeWithLLM('${result.id}')">
+                        🤖 Check with LLM?
+                    </button>
+                    <span class="llm-cta-hint">Optional: Get human-readable reasoning for this ${riskLevel} risk transaction</span>
                 </div>
             ` : ''}
-            ${(result.risk_factors || []).length > 0 ? `
-                <div class="risk-factors">
-                    <strong>🚨 Risk Factors:</strong>
-                    <div class="factor-tags">
-                        ${(result.risk_factors || []).map(f => `<span class="factor-tag">• ${f}</span>`).join('')}
-                    </div>
+            ${(explanation || contributingFeatures.length > 0 || riskFactors.length > 0) ? `
+                <div class="explanation-section ${isRisky ? 'risky' : ''}">
+                    <h4 class="explanation-section-title">Decision Rationale</h4>
+                    ${explanation ? `
+                        <div class="explanation-box">
+                            <p>${String(explanation).replace(/\n/g, '<br>')}</p>
+                        </div>
+                    ` : ''}
+                    ${contributingFeatures.length > 0 ? `
+                        <div class="contributing-features">
+                            <strong>Contributing Factors:</strong>
+                            <div class="factor-tags">
+                                ${contributingFeatures.map(f => `<span class="factor-tag">• ${f}</span>`).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                    ${riskFactors.length > 0 ? `
+                        <div class="risk-factors">
+                            <strong>Risk Factors:</strong>
+                            <div class="factor-tags">
+                                ${riskFactors.map(f => `<span class="factor-tag">• ${f}</span>`).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
                 </div>
             ` : ''}
         </div>

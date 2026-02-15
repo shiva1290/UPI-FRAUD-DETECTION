@@ -6,6 +6,8 @@ Flask REST API with comprehensive error handling,logging, and validation
 import os
 import sys
 import logging
+import uuid
+import time
 from datetime import datetime
 from functools import wraps
 import traceback
@@ -21,9 +23,14 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config import config
 from transaction_validator import validate_transaction_data
-from risk_scoring import RiskScorer
-from decision_layer import DecisionLayer
+from risk_engine import RiskEngine
 from prediction_service import run_risk_based_prediction
+from ml_prediction import predict_fraud_probability
+from feature_importance_store import FeatureImportanceStore
+from explanation_generator import ExplanationGenerator
+from metrics_analysis import get_metrics_guide, get_ml_vs_llm_comparison
+from prediction_store import append as store_append, find_by_id as store_find, get_recent as store_get_recent
+from prediction_logger import FilePredictionLogger
 
 # Project root for resolving data/results paths (works from any cwd)
 _APP_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -53,16 +60,20 @@ CORS(app, resources={
     }
 })
 
-# Risk scoring and decision layer (injectable for testing)
-risk_scorer = RiskScorer(
+# Prediction logger for fraud pattern analysis (DIP: injectable)
+prediction_logger = FilePredictionLogger(
+    log_dir=os.path.join(_APP_BASE, "logs"),
+    filename="prediction_logs.jsonl",
+)
+
+# Risk engine (scoring + thresholds + decision layer)
+risk_engine = RiskEngine(
     low_threshold=config.RISK_LOW_THRESHOLD,
     medium_threshold=config.RISK_MEDIUM_THRESHOLD,
+    llm_for_medium=True,
+    llm_for_high=True,
 )
-decision_layer = DecisionLayer(llm_for_medium=True, llm_for_high=True)
 
-# In-memory storage (replace with database in production)
-recent_predictions = []
-MAX_RECENT_PREDICTIONS = 100
 
 # Rate limiting storage
 from collections import defaultdict, deque
@@ -148,6 +159,29 @@ except Exception as e:
     ml_model = None
     preprocessor = None
 
+# Load feature importance and create explanation generator (before LLM)
+_feature_importance_data = None
+explanation_generator = None
+
+def _init_feature_importance():
+    global _feature_importance_data, explanation_generator
+    fi_path = os.path.join(_APP_BASE, 'results', 'feature_importance.json')
+    loaded = FeatureImportanceStore.load(fi_path)
+    if loaded:
+        _feature_importance_data = {'features': loaded[0], 'importance': loaded[1]}
+        explanation_generator = ExplanationGenerator(feature_order=loaded[0])
+        logger.info(f"✓ Feature importance loaded ({len(loaded[0])} features)")
+    elif ml_model and preprocessor and hasattr(preprocessor, 'feature_names'):
+        extracted = FeatureImportanceStore.extract_from_model(ml_model, preprocessor.feature_names, top_n=15)
+        if extracted:
+            _feature_importance_data = {'features': extracted[0], 'importance': extracted[1]}
+            explanation_generator = ExplanationGenerator(feature_order=extracted[0])
+            logger.info(f"✓ Feature importance extracted from model ({len(extracted[0])} features)")
+    if explanation_generator is None:
+        explanation_generator = ExplanationGenerator()
+
+_init_feature_importance()
+
 # Load LLM if enabled
 llm_detector = None
 llm_init_error = None
@@ -158,13 +192,12 @@ if config.GROQ_API_KEY:
 
 if config.LLM_ENABLED:
     try:
-        # Check if groq is installed
         import importlib.util
         if importlib.util.find_spec("groq") is None:
             raise ImportError("The 'groq' library is not installed. Please run: pip install groq")
-            
         from llm_detector import LLMFraudDetector
-        llm_detector = LLMFraudDetector(api_key=config.GROQ_API_KEY, model=config.LLM_MODEL)
+        fi_names = _feature_importance_data['features'] if _feature_importance_data else None
+        llm_detector = LLMFraudDetector(api_key=config.GROQ_API_KEY, model=config.LLM_MODEL, feature_names=fi_names)
         logger.info(f"✓ LLM detector loaded: {config.LLM_MODEL}")
     except Exception as e:
         llm_init_error = str(e)
@@ -215,7 +248,11 @@ except Exception as e:
 @app.route('/')
 def index():
     """Serve the main dashboard"""
-    return render_template('index.html')
+    return render_template(
+        'index.html',
+        metrics_guide=get_metrics_guide(),
+        ml_llm_comparison=get_ml_vs_llm_comparison(),
+    )
 
 @app.route('/health')
 @handle_errors
@@ -299,23 +336,22 @@ def _get_inner_model(model):
 @app.route('/api/feature_importance')
 @handle_errors
 def get_feature_importance():
-    """Get model feature importance"""
+    """Get model feature importance (stored or extracted)."""
+    if _feature_importance_data:
+        return jsonify({
+            'features': _feature_importance_data['features'][:10],
+            'importance': [round(x, 3) for x in _feature_importance_data['importance'][:10]]
+        })
     inner = _get_inner_model(ml_model)
     if inner is None or not hasattr(inner, 'feature_importances_'):
-        # Return mock/default importance if not available
         return jsonify({
             'features': ['beneficiary_fan_in', 'transaction_velocity', 'amount', 'is_night', 'failed_attempts'],
             'importance': [0.3, 0.25, 0.2, 0.15, 0.1]
         })
-    
     try:
         importance = inner.feature_importances_
-        # Get feature names from preprocessor if available
         feature_names = preprocessor.feature_names if preprocessor and hasattr(preprocessor, 'feature_names') else [f'Feature {i}' for i in range(len(importance))]
-        
-        # Sort by importance
-        indices = np.argsort(importance)[::-1][:10]  # Top 10
-        
+        indices = np.argsort(importance)[::-1][:10]
         return jsonify({
             'features': [feature_names[i] for i in indices],
             'importance': [round(float(importance[i]), 3) for i in indices]
@@ -384,40 +420,46 @@ def predict_ml():
         raise ValueError("No data provided")
 
     clean_data = validate_transaction_data(data)
-    df = pd.DataFrame([clean_data])
-    processed_df = preprocessor.preprocess(df, fit=False)
-    X, _ = preprocessor.prepare_features(processed_df, fit=False)
 
-    # ML probability (0–1, fraud = positive class)
-    proba = float(ml_model.predict_proba(X)[0])
+    t0 = time.perf_counter()
+    proba = predict_fraud_probability(ml_model, preprocessor, clean_data)
+    ml_latency_ms = round((time.perf_counter() - t0) * 1000, 2)
 
+    # Risk engine + explanation; LLM never auto-invoked (user must press button)
     base = run_risk_based_prediction(
         ml_probability=proba,
-        risk_scorer=risk_scorer,
-        decision_layer=decision_layer,
-        llm_predictor=llm_detector,
+        risk_engine=risk_engine,
+        llm_predictor=None,
         transaction_data=clean_data,
+        explanation_generator=explanation_generator,
+        use_llm=False,
+    )
+
+    risk_level = base['risk_level']
+    suggest_llm = (
+        risk_level in ('Medium', 'High')
+        and llm_detector is not None
     )
 
     result = {
+        'id': str(uuid.uuid4()),
         'risk_score': base['risk_score'],
-        'risk_level': base['risk_level'],
+        'risk_level': risk_level,
         'action': base['action'],
         'explanation': base['explanation'],
         'risk_factors': base['risk_factors'],
+        'contributing_features': base.get('contributing_features', []),
         'probability': base['probability'],
         'model': 'Random Forest',
         'timestamp': datetime.now().isoformat(),
-        'transaction_data': {
-            'amount': clean_data['amount'],
-            'hour': clean_data['hour'],
-            'day_of_week': clean_data['day_of_week']
-        }
+        'transaction_data': clean_data,
+        'suggest_llm': suggest_llm,
+        'llm_analyzed': False,
+        'ml_latency_ms': ml_latency_ms,
     }
 
-    recent_predictions.append(result)
-    if len(recent_predictions) > MAX_RECENT_PREDICTIONS:
-        recent_predictions.pop(0)
+    store_append(result)
+    prediction_logger.log(result)
 
     logger.info(f"Risk: {base['risk_level']} (score={base['risk_score']}) -> {base['action']}")
 
@@ -428,7 +470,7 @@ def predict_ml():
 @require_api_key
 @rate_limit(max_per_minute=10)
 def predict_llm():
-    """LLM-based fraud prediction (forced). Returns same format: risk_score, risk_level, explanation."""
+    """LLM-based fraud prediction. Optionally updates an existing prediction by prediction_id."""
     if llm_detector is None:
         error_msg = "LLM detector not available."
         if not config.LLM_ENABLED:
@@ -441,26 +483,52 @@ def predict_llm():
     if not data:
         raise ValueError("No data provided")
 
-    clean_data = validate_transaction_data(data)
+    prediction_id = data.get('prediction_id')
+    if prediction_id:
+        _, pred = store_find(prediction_id)
+        if pred is None:
+            return jsonify({'error': 'Prediction not found', 'prediction_id': prediction_id}), 404
+        clean_data = pred.get('transaction_data', {})
+    else:
+        clean_data = validate_transaction_data(data)
 
     try:
-        prediction, confidence, reasoning, risk_factors = llm_detector.predict_single(clean_data)
-        # LLM confidence is 0–100; use as risk_score
+        t0 = time.perf_counter()
+        _, confidence, reasoning, risk_factors = llm_detector.predict_single(clean_data)
+        llm_latency_ms = round((time.perf_counter() - t0) * 1000, 2)
         risk_score = round(float(confidence), 2)
-        _, risk_level = risk_scorer.score_and_classify(risk_score / 100.0)
-        decision = decision_layer.decide(risk_level)
+        assessment = risk_engine.assess(risk_score / 100.0)
+        contrib = []
+        if explanation_generator:
+            _, contrib = explanation_generator.generate(clean_data, risk_score)
 
         result = {
             'risk_score': risk_score,
-            'risk_level': risk_level.value,
-            'action': decision.action,
+            'risk_level': assessment.risk_level,
+            'action': assessment.action,
             'explanation': reasoning,
             'risk_factors': risk_factors if isinstance(risk_factors, list) else [],
+            'contributing_features': contrib,
             'model': 'LLM (Groq)',
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'llm_latency_ms': llm_latency_ms,
         }
 
-        logger.info(f"LLM Risk: {risk_level.value} (score={risk_score}) -> {decision.action}")
+        if prediction_id:
+            idx, pred = store_find(prediction_id)
+            if pred is not None and idx is not None:
+                pred.update({
+                    'explanation': reasoning,
+                    'risk_factors': result['risk_factors'],
+                    'contributing_features': result['contributing_features'],
+                    'llm_analyzed': True,
+                    'model': 'ML + LLM (Groq)',
+                    'llm_latency_ms': llm_latency_ms,
+                })
+                result = pred
+                prediction_logger.log(pred)
+
+        logger.info(f"LLM Risk: {assessment.risk_level} (score={risk_score}) -> {assessment.action}")
         return jsonify(result)
     except Exception as e:
         logger.error(f"LLM prediction failed: {str(e)}")
@@ -471,7 +539,7 @@ def predict_llm():
 @rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
 def get_recent_predictions():
     """Get recent predictions"""
-    return jsonify(recent_predictions[-20:])  # Last 20
+    return jsonify(store_get_recent(20))
 
 @app.route('/api/model_performance')
 @handle_errors

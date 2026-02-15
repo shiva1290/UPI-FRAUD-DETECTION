@@ -18,13 +18,22 @@ def _clean_api_key(key):
     return key.strip().strip('"').strip("'").replace('\r', '').replace('\n', '')
 
 
+# Model features to align LLM reasoning with (amount, velocity, device change, etc.)
+DEFAULT_MODEL_FEATURES = [
+    'amount', 'amount_deviation_pct', 'transaction_velocity', 'device_change',
+    'location_change_km', 'failed_attempts', 'is_night', 'beneficiary_fan_in',
+    'is_new_beneficiary', 'reversed_attempts', 'is_weekend', 'approval_delay_sec'
+]
+
+
 class LLMFraudDetector:
     """LLM fraud detector. Depends on LLMClient abstraction (DIP)."""
 
-    def __init__(self, api_key=None, model=None, client: LLMClient = None):
+    def __init__(self, api_key=None, model=None, client: LLMClient = None, feature_names=None):
         raw = api_key or os.environ.get('GROQ_API_KEY') or ''
         self.api_key = _clean_api_key(raw)
         self.model = model or os.environ.get('LLM_MODEL', 'llama-3.3-70b-versatile')
+        self.feature_names = feature_names or DEFAULT_MODEL_FEATURES
 
         if client is not None:
             self._llm_client = client
@@ -34,40 +43,41 @@ class LLMFraudDetector:
             self._llm_client = GroqLLMClient(api_key=self.api_key, model=self.model)
 
         self.metrics = {}
-        
+
     def _create_prompt(self, transaction):
-        """Create a prompt for the LLM based on transaction data"""
-        # Convert pandas series to dict if needed
+        """Create a prompt aligned with model features (amount, velocity, device change, etc.)."""
         if hasattr(transaction, 'to_dict'):
             data = transaction.to_dict()
         else:
             data = transaction
-            
-        # Select relevant fields to reduce token usage
-        fields = [
-            'amount', 'hour', 'is_night', 'is_weekend', 
-            'transaction_velocity', 'location_change_km',
-            'device_change', 'failed_attempts', 'beneficiary_fan_in'
-        ]
-        
-        context = {k: data.get(k, 'N/A') for k in fields}
-        
+
+        all_fields = list(dict.fromkeys(
+            self.feature_names + ['amount', 'hour', 'transaction_velocity', 'device_change',
+                                 'location_change_km', 'failed_attempts', 'beneficiary_fan_in']
+        ))
+        context = {k: data.get(k, 'N/A') for k in all_fields if k in data}
+
         prompt = f"""
         Analyze this UPI transaction for fraud risk.
-        
-        Transaction Data:
+
+        Transaction Data (aligned with model features):
         {json.dumps(context, indent=2)}
-        
+
+        Key features to consider: amount, amount_deviation_pct, transaction_velocity, device_change,
+        location_change_km, failed_attempts, is_night, beneficiary_fan_in, is_new_beneficiary.
+
         Task:
-        Determine if this transaction is fraudulent (is_fraud=1) or legitimate (is_fraud=0).
-        Provide a confidence score (0-100), reasoning, and list of risk factors.
-        
-        Output JSON format only:
+        - Determine if fraudulent (is_fraud=1) or legitimate (is_fraud=0).
+        - Provide confidence (0-100), reasoning, and risk_factors.
+        - Reference specific feature values in reasoning (e.g. "Amount deviation 150%", "Device change detected", "Velocity 8 txns").
+        - risk_factors must cite model features with values when relevant.
+
+        Output JSON only:
         {{
             "is_fraud": boolean,
             "confidence": number,
-            "reasoning": "string",
-            "risk_factors": ["string", "string"]
+            "reasoning": "string explaining why, citing amount, velocity, device_change, location_change, etc.",
+            "risk_factors": ["feature: observation", ...]
         }}
         """
         return prompt

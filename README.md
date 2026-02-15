@@ -4,14 +4,20 @@
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-**A hybrid fraud detection system that combines Machine Learning and Large Language Models (LLM) for real-time UPI transaction security.**
+**A hybrid ML + explainable reasoning system for UPI transaction fraud detection that combines fast machine learning with human-readable LLM explanations.**
 
 ---
 
 ## Table of Contents
 
+- [Problem Statement](#problem-statement)
+- [Contribution](#contribution)
 - [What This Project Is](#what-this-project-is)
 - [What It Does](#what-it-does)
+- [Risk Assessment Framework](#risk-assessment-framework)
+- [Architecture](#architecture)
+- [Limitations](#limitations)
+- [Future Work](#future-work)
 - [What It Follows](#what-it-follows)
 - [Project Flow](#project-flow)
 - [Technology Stack](#technology-stack)
@@ -21,19 +27,39 @@
 - [Running the Project](#running-the-project)
 - [Testing](#testing)
 - [Project Structure](#project-structure)
+- [Changelog Summary](#changelog-summary)
 - [Contributors](#contributors)
 - [License](#license)
 
 ---
 
+## Problem Statement
+
+Traditional fraud detection systems face a critical **explainability gap**: ML models (e.g., Random Forest, XGBoost) achieve high accuracy but output only binary labels or probability scores without *why* a transaction was flagged. Regulators, auditors, and users need interpretable reasoning for compliance, dispute resolution, and trust. Rule-based systems, while interpretable, lack the adaptability and performance of modern ML. This project addresses the **explainability gap** by bridging high-performing ML with human-readable reasoning.
+
+---
+
+## Contribution
+
+This project contributes a **hybrid ML + explainable reasoning system**:
+
+- **Fast ML layer**: Random Forest (or best F1 model) produces fraud probability and risk scores in milliseconds.
+- **Explainable reasoning layer**: Rule-based explanations for all transactions; optional LLM (Groq/Llama 3.3) for natural-language reasoning on medium/high-risk cases.
+- **Risk assessment framework**: Configurable thresholds map scores to actions (allow/review/block), not just fraud/legitimate.
+- **Dual latency visibility**: ML vs LLM latency comparison for transparency and optimization.
+
+The system is designed for academic research and demonstrates how to close the explainability gap in financial fraud detection.
+
+---
+
 ## What This Project Is
 
-This project is a **hybrid fraud detection system** built for the **Unified Payments Interface (UPI)** ecosystem. It is designed for:
+This project is a **risk assessment framework** for UPI transaction fraud detection, not a binary classifier. It produces **risk scores (0–100)**, **risk levels (Low/Medium/High)**, and **system actions (allow/review/block)** instead of a simple fraud/legitimate label. It is built for:
 
 - **Academic research** and coursework (e.g., final-year or capstone projects)
 - **Demonstrating** ML + LLM pipelines for financial security
-- **Real-time scoring** of UPI-like transactions as fraud or legitimate
-- **Explainable AI**: ML for speed, LLM for human-readable reasoning on suspicious cases
+- **Risk-based decisions**: configurable thresholds drive allow/review/block actions
+- **Explainable AI**: rule-based explanations for all; optional LLM reasoning for medium/high risk
 
 It is **not** a production banking system; it uses synthetic/research-quality data and is intended for learning and experimentation.
 
@@ -43,12 +69,111 @@ It is **not** a production banking system; it uses synthetic/research-quality da
 
 | Component | Purpose |
 |----------|--------|
-| **Data generation** | Creates synthetic UPI-style transactions (or uses optional real Kaggle data) with fraud patterns. |
-| **Preprocessing** | Engineers features (velocity, device change, location, beneficiary fan-in, etc.) and scales/normalizes for ML. |
-| **ML models** | Trains and compares Logistic Regression, Random Forest, XGBoost, SVM, Gradient Boosting; picks the best by F1. |
-| **LLM layer** | Uses Groq (Llama 3.3) to analyze a sample of transactions and return fraud/legit + reasoning and risk factors. |
-| **Flask API** | Serves predictions (`/api/predict`, `/api/predict_llm`), stats, model performance, and LLM samples. |
-| **Dashboard** | Web UI for testing transactions, viewing model comparison, hourly fraud distribution, and LLM reasoning. |
+| **Feature engineering** | Prepares raw transactions for ML (velocity, device change, location, beneficiary fan-in, etc.). |
+| **ML prediction** | Produces fraud probability (0–1) from trained model. |
+| **Risk engine** | Converts probability → risk score (0–100) → risk level (Low/Medium/High) → action (allow/review/block). |
+| **LLM explanation** | Rule-based explanations for all; optional Groq (Llama 3.3) for human-readable reasoning on medium/high risk. |
+| **Flask API** | Serves risk assessments (`/api/predict`, `/api/predict_llm`), stats, model performance. |
+| **Dashboard** | Web UI with risk gauge, latency comparison, and optional LLM analysis per transaction. |
+
+---
+
+## Risk Assessment Framework
+
+The system is a **risk assessment framework**, not a binary classifier:
+
+| Concept | Description |
+|---------|-------------|
+| **Risk score** | 0–100, derived from ML fraud probability. Higher = more likely fraud. |
+| **Thresholds** | Configurable via `.env`: `RISK_LOW_THRESHOLD` (default 30), `RISK_MEDIUM_THRESHOLD` (default 70). |
+| **Risk levels** | Low (score &lt; low_threshold), Medium (low ≤ score &lt; medium), High (score ≥ medium). |
+| **Actions** | Low → allow; Medium → review; High → block. |
+| **LLM** | User can optionally request LLM explanation for medium/high risk (button in UI). |
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                         RISK ASSESSMENT PIPELINE (Runtime)                        │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                   │
+│   Raw Transaction                                                                │
+│         │                                                                         │
+│         ▼                                                                         │
+│   ┌──────────────────┐                                                           │
+│   │ Feature          │  Clean, engineer, encode, scale                            │
+│   │ Engineering      │  (preprocessor, feature_engineering.py)                    │
+│   └────────┬─────────┘                                                           │
+│            │                                                                      │
+│            ▼                                                                      │
+│   ┌──────────────────┐                                                           │
+│   │ ML Prediction    │  predict_proba → fraud probability (0–1)                   │
+│   │ (ml_prediction)  │                                                           │
+│   └────────┬─────────┘                                                           │
+│            │                                                                      │
+│            ▼                                                                      │
+│   ┌──────────────────┐     ┌─────────────────────────────┐                       │
+│   │ Risk Engine      │     │ Threshold Layer             │                       │
+│   │ (risk_engine)    │────▶│ Low < 30 | Med 30–70 | High │                       │
+│   │                  │     │ (configurable via .env)     │                       │
+│   └────────┬─────────┘     └─────────────────────────────┘                       │
+│            │                                                                      │
+│            ▼                                                                      │
+│   ┌──────────────────┐                                                           │
+│   │ Decision Layer   │  allow | review | block                                    │
+│   │ (inside engine)  │                                                           │
+│   └────────┬─────────┘                                                           │
+│            │                                                                      │
+│            ▼                                                                      │
+│   ┌──────────────────┐                                                           │
+│   │ LLM Explanation  │  Rule-based always; LLM on user request (medium/high)      │
+│   │ (llm_explanation)│                                                           │
+│   └──────────────────┘                                                           │
+│                                                                                   │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Module layout (SOLID):**
+
+| Module | Responsibility |
+|--------|----------------|
+| **feature_engineering** | Prepares raw transaction data for ML (clean, engineer, encode, scale) |
+| **ml_prediction** | Produces fraud probability (0–1) from the trained model |
+| **risk_engine** | Converts probability → risk score → risk level → decision |
+| **llm_explanation** | Generates rule-based or LLM-based explanations |
+
+**Threshold configuration:**
+
+| Threshold | Default | Meaning |
+|-----------|---------|---------|
+| `RISK_LOW_THRESHOLD` | 30 | Score &lt; 30 = Low risk → allow |
+| `RISK_MEDIUM_THRESHOLD` | 70 | 30 ≤ score &lt; 70 = Medium → review; score ≥ 70 = High → block |
+
+---
+
+## Limitations
+
+- **Synthetic data**: The system uses synthetic or research-quality UPI datasets. Real production data may have different distributions, attack patterns, and regulatory constraints. Results are not directly applicable to live banking systems without validation on real data.
+
+- **Threshold dependency**: Risk levels and actions (allow/review/block) depend on configurable thresholds. Suboptimal thresholds can over-block legitimate transactions or under-flag fraud. Thresholds should be tuned per deployment context.
+
+- **LLM latency and cost**: LLM reasoning adds hundreds of milliseconds per request and consumes API credits. It is intended as an optional, on-demand layer for medium/high-risk cases, not for every transaction.
+
+- **Academic scope**: This project is for learning and demonstration. It is not audited for production use, regulatory compliance, or security hardening.
+
+---
+
+## Future Work
+
+- **Real-time streaming**: Extend the pipeline to consume transaction streams (e.g., Kafka, event queues) for continuous scoring and alerting in near real time.
+
+- **Graph-based fraud detection**: Model beneficiary networks, device graphs, and money-flow paths to detect organized fraud rings and multi-hop laundering patterns.
+
+- **Adaptive thresholds**: Learn or recommend thresholds from feedback (chargebacks, false positives) to reduce manual tuning.
+
+- **Production hardening**: Add audit logging, role-based access, and integration with banking middleware and regulatory reporting.
 
 ---
 
@@ -69,33 +194,33 @@ It is **not** a production banking system; it uses synthetic/research-quality da
 │                         SETUP (one-time)                                  │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  1. Clone repo → 2. Create venv → 3. pip install -r requirements.txt    │
-│  4. Create .env (optional: GROQ_API_KEY for LLM)                         │
+│  4. Create .env (optional: GROQ_API_KEY, RISK_LOW_THRESHOLD, etc.)       │
 └─────────────────────────────────────────────────────────────────────────┘
                     │
                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         TRAINING (train.py)                               │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  [1] Load or generate data (data/upi_transactions.csv)                    │
-│  [2] Preprocess → save preprocessor (models/preprocessor.pkl)              │
-│  [3] Train/validate/test 5 ML models → pick best by F1                     │
-│  [4] Save best model (models/best_model_*.pkl + best_model_random_forest) │
-│  [5] (Optional) Run LLM on sample → save (results/llm_predictions.csv)     │
-│  [6] Save metrics & plots (results/model_performance.csv, *.png)           │
+│  [1] Load or generate data (data/upi_transactions.csv)                   │
+│  [2] Feature engineering + preprocess → save preprocessor                │
+│  [3] Train/validate/test 5 ML models → pick best by F1                   │
+│  [4] Save best model (models/best_model_*.pkl + best_model_random_forest)│
+│  [5] (Optional) Run LLM on sample → save (results/llm_predictions.csv)   │
+│  [6] Save metrics & plots (results/model_performance.csv, *.png)         │
 └─────────────────────────────────────────────────────────────────────────┘
                     │
                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         RUNTIME (app.py)                                   │
+│                         RUNTIME (app.py)                                  │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  • Load model + preprocessor from models/                                 │
-│  • (If GROQ_API_KEY set) Initialize LLM detector                          │
-│  • Serve dashboard (/) and API (/api/*)                                    │
-│  • /api/predict, /api/predict_llm, /api/stats, /api/model_performance, …   │
+│  • Load model + preprocessor; init risk engine (thresholds from .env)    │
+│  • (If GROQ_API_KEY set) Initialize LLM detector                         │
+│  • Pipeline: feature_engineering → ml_prediction → risk_engine → explain │
+│  • Serve dashboard (/) and API (/api/predict, /api/predict_llm, …)       │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Summary:** Setup → Train (data → preprocess → ML → optional LLM → save artifacts) → Run app (load artifacts, serve API and dashboard).
+**Summary:** Setup → Train (data → feature engineering → ML → optional LLM → save) → Run (risk pipeline: features → ML prob → risk score → threshold → decision → explanation).
 
 ---
 
@@ -203,6 +328,8 @@ Copy-Item .env.example .env
 | `RATE_LIMIT_PER_MINUTE` | No | Max requests per minute per IP. Default: `60`. |
 | `MODEL_PATH` | No | Path to best ML model. Default: `models/best_model_random_forest.pkl`. |
 | `PREPROCESSOR_PATH` | No | Path to preprocessor. Default: `models/preprocessor.pkl`. |
+| `RISK_LOW_THRESHOLD` | No | Score below this = Low risk. Default: `30`. |
+| `RISK_MEDIUM_THRESHOLD` | No | Score below this = Medium; above = High. Default: `70`. |
 
 **Minimal `.env` for LLM:**
 
@@ -323,35 +450,54 @@ UPI-FRAUD-DETECTION/
 ├── data/                    # Datasets (e.g. upi_transactions.csv)
 ├── models/                  # Saved model and preprocessor (.pkl)
 ├── results/                 # model_performance.csv, plots, llm_predictions.csv
+├── logs/                    # Prediction logs (prediction_logs.jsonl)
 ├── src/                     # Backend and training
 │   ├── app.py              # Flask API and dashboard server
 │   ├── config.py           # Configuration from .env
 │   ├── train.py            # Full training pipeline (data → ML → optional LLM)
 │   ├── preprocessor.py     # Feature engineering and scaling
+│   ├── feature_engineering.py  # Prepares transactions for ML
+│   ├── ml_prediction.py    # Fraud probability prediction
+│   ├── risk_engine.py      # Risk scoring + thresholds + decision layer
+│   ├── llm_explanation.py  # Rule-based or LLM explanations
 │   ├── models.py           # ML model definitions and comparison
 │   ├── llm_detector.py     # Groq-based LLM fraud detector
 │   ├── data_generator.py   # Synthetic UPI data generation
 │   └── test_api.py         # API tests
 ├── web/
 │   ├── static/             # CSS, JS (e.g. dashboard.js)
-│   └── templates/         # HTML (e.g. index.html)
+│   └── templates/          # HTML (e.g. index.html)
 ├── .env.example            # Example environment variables
-├── .env                     # Your config (do not commit)
-├── requirements.txt         # Python dependencies
-├── bin/                     # Scripts (run from project root)
+├── .env                    # Your config (do not commit)
+├── requirements.txt        # Python dependencies
+├── bin/                    # Scripts (run from project root)
 │   ├── setup_and_run_linux.sh
 │   ├── setup_and_run_mac.sh
-│   ├── setup_and_run.sh     # Generic Unix
+│   ├── setup_and_run.sh
 │   ├── setup_and_run_windows.bat
 │   ├── setup_and_run_windows.ps1
 │   ├── start_dashboard.sh
-│   ├── run.sh               # Training with LLM
-│   └── demo_llm.sh          # CLI LLM demo
-├── src/                     # Backend (see above)
-└── README.md                # This file
+│   ├── run.sh
+│   ├── demo_llm.sh
+│   ├── ARCHITECTURE.md     # Detailed architecture (archived)
+│   └── CHANGELOG.md        # Full changelog (archived)
+└── README.md               # This file
 ```
 
 **Note:** LLM setup (Groq API key, `.env`) is in [Configuration](#configuration) above. To test LLM from the command line, run from project root: `./bin/demo_llm.sh` or `cd src && python demo_llm.py` (or use the dashboard’s “Analyze with LLM”).
+
+---
+
+## Changelog Summary
+
+- Training now saves `best_model_random_forest.pkl` for dashboard compatibility.
+- Paths resolved from project root; app starts even if models are missing (503 until trained).
+- Feature importance, LLM samples, and model names fixed for frontend.
+- ROC-AUC added for LLM metrics; prediction logger and latency measurement added.
+- Risk gauge, latency comparison, and prediction logs for fraud pattern analysis.
+- API key handling and security improvements; setup scripts for Linux, macOS, Windows.
+
+Full changelog: [bin/CHANGELOG.md](bin/CHANGELOG.md)
 
 ---
 
