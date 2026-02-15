@@ -24,6 +24,7 @@ from data_generator import EnhancedUPIDataGenerator
 from preprocessor import UPIPreprocessor
 from models import FraudDetectionModel, ModelComparison
 from llm_detector import LLMFraudDetector
+from feature_importance_store import FeatureImportanceStore
 
 def main(use_llm=False):
     """Main training pipeline with LLM comparison"""
@@ -235,12 +236,18 @@ def main(use_llm=False):
         save_path=f'../results/roc_curve_{best_model_name}.png'
     )
     
-    # Feature importance
+    # Extract and store feature importance
     if best_model_name in ['random_forest', 'xgboost', 'gradient_boost']:
         print("\nTop 10 Most Important Features (ML Model):")
         importances = best_ml_model.get_feature_importance(preprocessor.feature_names, top_n=10)
         for i, (feature, importance) in enumerate(importances, 1):
             print(f"  {i}. {feature}: {importance:.4f}")
+        # Save feature importance for dashboard and explanations
+        extracted = FeatureImportanceStore.extract_from_model(
+            best_ml_model, preprocessor.feature_names, top_n=15
+        )
+        if extracted:
+            FeatureImportanceStore.save(*extracted, '../results/feature_importance.json')
     
     # Final Summary
     print("\n" + "="*70)

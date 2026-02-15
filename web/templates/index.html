@@ -16,7 +16,7 @@
                 <div class="logo-icon">FD</div>
                 <div>
                     <h1>UPI Fraud Detection</h1>
-                    <p>AI-Powered Transaction Security</p>
+                    <p>Risk Assessment &amp; Decision Support</p>
                 </div>
             </div>
             <div class="header-stats" id="headerStats">
@@ -91,6 +91,75 @@
                         </tbody>
                     </table>
                 </div>
+
+                <!-- Metrics Guide: Recall importance, FP vs FN -->
+                <div class="metrics-guide section-inner">
+                    <h3 class="metrics-guide-title">{{ metrics_guide.title }}</h3>
+                    <div class="metrics-guide-grid">
+                        <div class="metrics-guide-card">
+                            <h4>{{ metrics_guide.recall_importance.heading }}</h4>
+                            <p>{{ metrics_guide.recall_importance.content }}</p>
+                        </div>
+                        <div class="metrics-guide-card">
+                            <h4>{{ metrics_guide.false_positives_vs_false_negatives.heading }}</h4>
+                            <p>{{ metrics_guide.false_positives_vs_false_negatives.content }}</p>
+                        </div>
+                    </div>
+                    <div class="metrics-definitions">
+                        <h4>Quick definitions</h4>
+                        <ul>
+                            <li><strong>Precision:</strong> {{ metrics_guide.metrics_definitions.precision }}</li>
+                            <li><strong>Recall:</strong> {{ metrics_guide.metrics_definitions.recall }}</li>
+                            <li><strong>F1-score:</strong> {{ metrics_guide.metrics_definitions.f1_score }}</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- ML vs ML+LLM qualitative comparison -->
+                <div class="ml-llm-comparison section-inner">
+                    <h3 class="section-subtitle">{{ ml_llm_comparison.title }}</h3>
+                    <div class="comparison-grid">
+                        <div class="comparison-card ml-only">
+                            <h4>{{ ml_llm_comparison.ml_only.heading }}</h4>
+                            <div class="comparison-list">
+                                <span class="list-label">Strengths</span>
+                                <ul>
+                                    {% for s in ml_llm_comparison.ml_only.strengths %}
+                                    <li>{{ s }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            <div class="comparison-list">
+                                <span class="list-label">Limitations</span>
+                                <ul>
+                                    {% for s in ml_llm_comparison.ml_only.limitations %}
+                                    <li>{{ s }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                        </div>
+                        <div class="comparison-card ml-llm">
+                            <h4>{{ ml_llm_comparison.ml_plus_llm.heading }}</h4>
+                            <div class="comparison-list">
+                                <span class="list-label">Strengths</span>
+                                <ul>
+                                    {% for s in ml_llm_comparison.ml_plus_llm.strengths %}
+                                    <li>{{ s }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                            <div class="comparison-list">
+                                <span class="list-label">Limitations</span>
+                                <ul>
+                                    {% for s in ml_llm_comparison.ml_plus_llm.limitations %}
+                                    <li>{{ s }}</li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="comparison-recommendation">{{ ml_llm_comparison.recommendation }}</p>
+                </div>
             </div>
 
             <!-- Charts Row -->
@@ -100,14 +169,14 @@
                     <canvas id="hourlyChart"></canvas>
                 </div>
                 <div class="chart-card">
-                    <h3>Feature Importance</h3>
+                    <h3>Top Contributing Fraud Features (Model)</h3>
                     <canvas id="featureChart"></canvas>
                 </div>
             </div>
 
             <!-- Transaction Tester -->
             <div class="section tester-section">
-                <h2 class="section-title">Test Fraud Detection - Advanced Parameters</h2>
+                <h2 class="section-title">Test Transaction Risk Assessment</h2>
                 <div class="tester-container">
                     <div class="tester-form">
                         <h4 style="margin-bottom: 1rem; color: var(--primary-light);">Transaction Details</h4>
@@ -251,7 +320,7 @@
                         </div>
 
                         <button class="btn-primary" onclick="testTransaction()">
-                            Analyze with ML Model
+                            Assess Risk
                         </button>
                         <button class="btn-secondary" onclick="testWithLLM()" style="margin-left: 1rem;">
                             Analyze with LLM
@@ -260,7 +329,7 @@
                     <div class="tester-result" id="predictionResult">
                         <div class="result-placeholder">
                             <div class="placeholder-icon">...</div>
-                            <p>Configure transaction parameters above to test fraud detection</p>
+                            <p>Configure parameters and run to see Risk Score, Risk Level, and Decision (Allowed / Suspicious / Flagged)</p>
                         </div>
                     </div>
                 </div>
@@ -274,9 +343,33 @@
                 </div>
             </div>
 
-            <!-- Recent Transactions -->
+            <!-- Recent Predictions (from tester) -->
             <div class="section">
-                <h2 class="section-title">Recent Transactions</h2>
+                <h2 class="section-title">Recent Predictions</h2>
+                <p class="section-desc">Decision-support output: Risk Score, Risk Level, and Decision (Allowed / Suspicious / Flagged).</p>
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Amount</th>
+                                <th>Time</th>
+                                <th>Risk Score</th>
+                                <th>Risk Level</th>
+                                <th>Decision</th>
+                                <th>LLM</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recentPredictionsTable">
+                            <tr><td colspan="7" class="loading">No predictions yet. Use the tester above.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Recent Transactions (from dataset) -->
+            <div class="section">
+                <h2 class="section-title">Recent Transactions (Dataset Sample)</h2>
                 <div class="table-container">
                     <table class="data-table">
                         <thead>
