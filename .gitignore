@@ -72,3 +72,6 @@ htmlcov/
 **/brain/**/*.webp
 **/brain/**/*.png
 **/.system_generated/
+bin/
+.cursorignore
+logs/

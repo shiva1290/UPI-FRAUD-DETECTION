@@ -223,35 +223,35 @@ Use the script for your operating system. Each script: creates a virtual environ
 **Linux:**
 
 ```bash
-chmod +x setup_and_run_linux.sh
-./setup_and_run_linux.sh
+chmod +x bin/setup_and_run_linux.sh
+./bin/setup_and_run_linux.sh
 ```
 
 **macOS:**
 
 ```bash
-chmod +x setup_and_run_mac.sh
-./setup_and_run_mac.sh
+chmod +x bin/setup_and_run_mac.sh
+./bin/setup_and_run_mac.sh
 ```
 
 **Windows:**
 
-**Command Prompt:** double-click `setup_and_run_windows.bat` or run:
+**Command Prompt:** run:
 ```cmd
-setup_and_run_windows.bat
+bin\setup_and_run_windows.bat
 ```
 
 **PowerShell:** (if execution policy allows)
 ```powershell
-.\setup_and_run_windows.ps1
+.\bin\setup_and_run_windows.ps1
 ```
 If you see an execution policy error, run once: `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`
 
-**Generic Unix (Linux/macOS):** If you prefer the single script:
+**Generic Unix (Linux/macOS):**
 
 ```bash
-chmod +x setup_and_run.sh
-./setup_and_run.sh
+chmod +x bin/setup_and_run.sh
+./bin/setup_and_run.sh
 ```
 
 This will: create venv if missing, install dependencies, train models (with LLM if `GROQ_API_KEY` is in `.env`), then start the dashboard.
@@ -271,7 +271,7 @@ cd src && python train.py && cd ..
 cd src && python train.py --with-llm && cd ..
 
 # Start dashboard
-./start_dashboard.sh
+./bin/start_dashboard.sh
 # Or: cd src && python app.py
 ```
 
@@ -338,19 +338,20 @@ UPI-FRAUD-DETECTION/
 ├── .env.example            # Example environment variables
 ├── .env                     # Your config (do not commit)
 ├── requirements.txt         # Python dependencies
-├── setup_and_run_linux.sh   # Setup + run (Linux)
-├── setup_and_run_mac.sh     # Setup + run (macOS)
-├── setup_and_run_windows.bat   # Setup + run (Windows CMD)
-├── setup_and_run_windows.ps1   # Setup + run (Windows PowerShell)
-├── setup_and_run.sh         # Setup + run (generic Unix)
-├── start_dashboard.sh       # Start dashboard (Unix)
-├── run.sh                   # Training with LLM (Unix)
-├── demo_llm.sh              # Optional: CLI LLM demo (Unix; see README)
-├── LLM_SETUP.md             # Optional: LLM setup (superseded by this README)
+├── bin/                     # Scripts (run from project root)
+│   ├── setup_and_run_linux.sh
+│   ├── setup_and_run_mac.sh
+│   ├── setup_and_run.sh     # Generic Unix
+│   ├── setup_and_run_windows.bat
+│   ├── setup_and_run_windows.ps1
+│   ├── start_dashboard.sh
+│   ├── run.sh               # Training with LLM
+│   └── demo_llm.sh          # CLI LLM demo
+├── src/                     # Backend (see above)
 └── README.md                # This file
 ```
 
-**Note:** LLM setup (Groq API key, `.env`) is in [Configuration](#configuration) above. To test LLM from the command line, run from project root: `cd src && source ../venv/bin/activate && python demo_llm.py` (or use the dashboard’s “Analyze with LLM”).
+**Note:** LLM setup (Groq API key, `.env`) is in [Configuration](#configuration) above. To test LLM from the command line, run from project root: `./bin/demo_llm.sh` or `cd src && python demo_llm.py` (or use the dashboard’s “Analyze with LLM”).
 
 ---
 

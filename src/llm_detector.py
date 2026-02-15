@@ -1,15 +1,15 @@
 """
-LLM-Based Fraud Detector using Groq API
-Analyzes transactions using Llama 3 models
+LLM-Based Fraud Detector. Uses LLMClient abstraction (DIP).
 """
 
 import os
 import json
 import time
 import pandas as pd
-import httpx
-from groq import Groq
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+from llm_client import LLMClient, GroqLLMClient
+
 
 def _clean_api_key(key):
     """Strip quotes, whitespace, and line endings from API key."""
@@ -19,30 +19,20 @@ def _clean_api_key(key):
 
 
 class LLMFraudDetector:
-    def __init__(self, api_key=None, model=None):
-        """
-        Initialize Groq client
-        """
+    """LLM fraud detector. Depends on LLMClient abstraction (DIP)."""
+
+    def __init__(self, api_key=None, model=None, client: LLMClient = None):
         raw = api_key or os.environ.get('GROQ_API_KEY') or ''
         self.api_key = _clean_api_key(raw)
         self.model = model or os.environ.get('LLM_MODEL', 'llama-3.3-70b-versatile')
-        
-        if not self.api_key:
-            raise ValueError("GROQ_API_KEY not found. Please set it in .env file.")
-            
-        # Initialize client
-        # Fix: Handle potential version mismatches between groq and httpx
-        try:
-            # Strategy 1: Explicit httpx client (bypasses internal proxy logic)
-            self.client = Groq(api_key=self.api_key, http_client=httpx.Client())
-        except TypeError:
-            try:
-                # Strategy 2: Pass proxies=None explicitly
-                self.client = Groq(api_key=self.api_key, proxies=None)
-            except TypeError:
-                # Strategy 3: Default initialization
-                self.client = Groq(api_key=self.api_key)
-                
+
+        if client is not None:
+            self._llm_client = client
+        else:
+            if not self.api_key:
+                raise ValueError("GROQ_API_KEY not found. Please set it in .env file.")
+            self._llm_client = GroqLLMClient(api_key=self.api_key, model=self.model)
+
         self.metrics = {}
         
     def _create_prompt(self, transaction):
@@ -89,24 +79,11 @@ class LLMFraudDetector:
         """
         try:
             prompt = self._create_prompt(transaction_data)
-            
-            completion = self.client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "system", 
-                        "content": "You are an expert financial fraud detection system. Output valid JSON only."
-                    },
-                    {
-                        "role": "user", 
-                        "content": prompt
-                    }
-                ],
-                model=self.model,
-                temperature=0.1,
-                response_format={"type": "json_object"}
-            )
-            
-            response_text = completion.choices[0].message.content
+            messages = [
+                {"role": "system", "content": "You are an expert financial fraud detection system. Output valid JSON only."},
+                {"role": "user", "content": prompt}
+            ]
+            response_text = self._llm_client.complete(messages, temperature=0.1)
             result = json.loads(response_text)
             
             prediction = 1 if result.get('is_fraud', False) else 0

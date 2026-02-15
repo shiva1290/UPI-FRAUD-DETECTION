@@ -20,6 +20,10 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config import config
+from transaction_validator import validate_transaction_data
+from risk_scoring import RiskScorer
+from decision_layer import DecisionLayer
+from prediction_service import run_risk_based_prediction
 
 # Project root for resolving data/results paths (works from any cwd)
 _APP_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,6 +52,13 @@ CORS(app, resources={
         "origins": config.CORS_ORIGINS.split(',') if config.CORS_ORIGINS != '*' else '*'
     }
 })
+
+# Risk scoring and decision layer (injectable for testing)
+risk_scorer = RiskScorer(
+    low_threshold=config.RISK_LOW_THRESHOLD,
+    medium_threshold=config.RISK_MEDIUM_THRESHOLD,
+)
+decision_layer = DecisionLayer(llm_for_medium=True, llm_for_high=True)
 
 # In-memory storage (replace with database in production)
 recent_predictions = []
@@ -357,109 +368,44 @@ def get_llm_samples():
         logger.error(f"Error loading LLM samples: {str(e)}")
         return jsonify([])
 
-def validate_transaction_data(data: dict) -> dict:
-    """Validate and clean transaction data"""
-    required_fields = ['amount', 'hour', 'day_of_week']
-    
-    # Check required fields
-    missing = [f for f in required_fields if f not in data]
-    if missing:
-        raise ValueError(f"Missing required fields: {', '.join(missing)}")
-    
-    # Validate amount
-    try:
-        amount = float(data['amount'])
-        if amount < 0:
-            raise ValueError("Amount must be positive")
-        if amount > 1000000:
-            raise ValueError("Amount exceeds maximum limit (1,000,000)")
-    except (TypeError, ValueError) as e:
-        raise ValueError(f"Invalid amount: {str(e)}")
-    
-    # Validate hour
-    try:
-        hour = int(data['hour'])
-        if not 0 <= hour <= 23:
-            raise ValueError("Hour must be between 0 and 23")
-    except (TypeError, ValueError):
-        raise ValueError("Invalid hour format")
-    
-    # Validate day_of_week
-    try:
-        day = int(data['day_of_week'])
-        if not 0 <= day <= 6:
-            raise ValueError("Day of week must be between 0 and 6")
-    except (TypeError, ValueError):
-        raise ValueError("Invalid day_of_week format")
-    
-    # Set defaults for optional fields
-    defaults = {
-        'is_weekend': 1 if data.get('day_of_week', 0) >= 5 else 0,
-        'is_night': 1 if data.get('hour', 12) in [22, 23, 0, 1, 2, 3, 4, 5] else 0,
-        'transaction_velocity': 1,
-        'failed_attempts': 0,
-        'amount_deviation_pct': 0.0,
-        'user_id': 'UNKNOWN',
-        'merchant_id': 'UNKNOWN',
-        'device_id': 'UNKNOWN',
-        'location_lat': 28.6139,
-        'location_lon': 77.2090,
-        
-        # Enhanced features defaults
-        'reversed_attempts': 0,
-        'device_change': 0,
-        'location_change_km': 0.0,
-        'is_new_beneficiary': 0,
-        'beneficiary_fan_in': 1,
-        'beneficiary_account_age_days': 365,
-        'approval_delay_sec': 1.0,
-        'is_multiple_device_accounts': 0,
-        'network_switch': 0,
-        'recent_unknown_call': 0,
-        'has_suspicious_keywords': 0,
-        'merchant_category_mismatch': 0,
-        'fraud_network_proximity': 0.0
-    }
-    
-    # Merge with defaults
-    clean_data = {**defaults, **data}
-    
-    return clean_data
-
 @app.route('/api/predict', methods=['POST'])
 @app.route('/api/predict_ml', methods=['POST'])
 @handle_errors
 @require_api_key
 @rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
 def predict_ml():
-    """ML-based fraud prediction"""
+    """Risk-based fraud prediction: ML probability -> risk score -> risk level -> decision.
+    LLM explanation only for Medium/High risk."""
     if ml_model is None or preprocessor is None:
         return jsonify({'error': 'ML model not available'}), 503
-    
+
     data = request.get_json()
     if not data:
         raise ValueError("No data provided")
-    
-    # Validate and clean data
+
     clean_data = validate_transaction_data(data)
-    
-    # Create DataFrame
     df = pd.DataFrame([clean_data])
-    
-    # Preprocess (Engineer features and encode inputs)
     processed_df = preprocessor.preprocess(df, fit=False)
-    
-    # Prepare features (Scale and align columns)
     X, _ = preprocessor.prepare_features(processed_df, fit=False)
-    
-    # Predict
-    prediction = int(ml_model.predict(X)[0])
-    confidence = float(ml_model.predict_proba(X)[0] * 100)
-    
+
+    # ML probability (0–1, fraud = positive class)
+    proba = float(ml_model.predict_proba(X)[0])
+
+    base = run_risk_based_prediction(
+        ml_probability=proba,
+        risk_scorer=risk_scorer,
+        decision_layer=decision_layer,
+        llm_predictor=llm_detector,
+        transaction_data=clean_data,
+    )
+
     result = {
-        'prediction': 'fraud' if prediction == 1 else 'legitimate',
-        'confidence': round(confidence, 2),
-        'probability': round(confidence / 100, 4),
+        'risk_score': base['risk_score'],
+        'risk_level': base['risk_level'],
+        'action': base['action'],
+        'explanation': base['explanation'],
+        'risk_factors': base['risk_factors'],
+        'probability': base['probability'],
         'model': 'Random Forest',
         'timestamp': datetime.now().isoformat(),
         'transaction_data': {
@@ -468,59 +414,57 @@ def predict_ml():
             'day_of_week': clean_data['day_of_week']
         }
     }
-    
-    #Store prediction
+
     recent_predictions.append(result)
     if len(recent_predictions) > MAX_RECENT_PREDICTIONS:
         recent_predictions.pop(0)
-    
-    logger.info(f"ML Prediction: {result['prediction']} ({result['confidence']}%)")
-    
+
+    logger.info(f"Risk: {base['risk_level']} (score={base['risk_score']}) -> {base['action']}")
+
     return jsonify(result)
 
 @app.route('/api/predict_llm', methods=['POST'])
 @handle_errors
 @require_api_key
-@rate_limit(max_per_minute=10)  # Lower rate limit for LLM
+@rate_limit(max_per_minute=10)
 def predict_llm():
-    """LLM-based fraud prediction"""
+    """LLM-based fraud prediction (forced). Returns same format: risk_score, risk_level, explanation."""
     if llm_detector is None:
-        # Diagnostic info
         error_msg = "LLM detector not available."
         if not config.LLM_ENABLED:
             error_msg += " (LLM_ENABLED is False in config)"
         else:
             error_msg += f" (Initialization failed: {llm_init_error or 'Check server logs'})"
         return jsonify({'error': error_msg}), 503
-    
+
     data = request.get_json()
     if not data:
         raise ValueError("No data provided")
-    
-    # Validate data
+
     clean_data = validate_transaction_data(data)
-    
+
     try:
         prediction, confidence, reasoning, risk_factors = llm_detector.predict_single(clean_data)
-        
+        # LLM confidence is 0–100; use as risk_score
+        risk_score = round(float(confidence), 2)
+        _, risk_level = risk_scorer.score_and_classify(risk_score / 100.0)
+        decision = decision_layer.decide(risk_level)
+
         result = {
-            'prediction': 'fraud' if prediction == 1 else 'legitimate',
-            'confidence': round(confidence, 2),
-            'reasoning': reasoning,
-            'risk_factors': risk_factors,
+            'risk_score': risk_score,
+            'risk_level': risk_level.value,
+            'action': decision.action,
+            'explanation': reasoning,
+            'risk_factors': risk_factors if isinstance(risk_factors, list) else [],
             'model': 'LLM (Groq)',
             'timestamp': datetime.now().isoformat()
         }
-        
-        logger.info(f"LLM Prediction: {result['prediction']} ({result['confidence']}%)")
-        
+
+        logger.info(f"LLM Risk: {risk_level.value} (score={risk_score}) -> {decision.action}")
         return jsonify(result)
     except Exception as e:
         logger.error(f"LLM prediction failed: {str(e)}")
-        return jsonify({
-            'error': 'LLM prediction failed',
-            'message': str(e)
-        }), 500
+        return jsonify({'error': 'LLM prediction failed', 'message': str(e)}), 500
 
 @app.route('/api/recent_predictions')
 @handle_errors

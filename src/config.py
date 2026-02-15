@@ -50,6 +50,10 @@ class Config:
     LOG_LEVEL: str = os.getenv('LOG_LEVEL', 'INFO')
     LOG_FILE: str = os.getenv('LOG_FILE', 'logs/api.log')
     
+    # Risk scoring thresholds (0–100)
+    RISK_LOW_THRESHOLD: float = float(os.getenv('RISK_LOW_THRESHOLD', '30'))
+    RISK_MEDIUM_THRESHOLD: float = float(os.getenv('RISK_MEDIUM_THRESHOLD', '70'))
+
     # Security
     API_KEY_REQUIRED: bool = os.getenv('API_KEY_REQUIRED', 'False').lower() == 'true'
     API_KEYS: List[str] = field(default_factory=lambda: os.getenv('API_KEYS', '').split(',') if os.getenv('API_KEYS') else [])

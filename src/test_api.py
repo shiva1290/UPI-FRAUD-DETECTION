@@ -77,13 +77,13 @@ def test_ml_prediction_valid():
         data = response.json()
         success = (
             response.status_code == 200 and
-            'prediction' in data and
-            'confidence' in data and
-            0 <= data['confidence'] <= 100
+            'risk_score' in data and
+            'risk_level' in data and
+            'action' in data and
+            0 <= data['risk_score'] <= 100
         )
         print_test("ML Prediction (Valid)", success,
-                  f"Prediction: {data.get('prediction', 'N/A')}, "
-                  f"Confidence: {data.get('confidence', 'N/A')}%")
+                  f"Risk: {data.get('risk_level', 'N/A')} ({data.get('risk_score', 'N/A')}) -> {data.get('action', 'N/A')}")
         return success
     except Exception as e:
         print_test("ML Prediction (Valid)", False, str(e))
@@ -112,8 +112,7 @@ def test_ml_prediction_suspicious():
         data = response.json()
         success = response.status_code == 200
         print_test("ML Prediction (Suspicious)", success,
-                  f"Prediction: {data.get('prediction', 'N/A')}, "
-                  f"Confidence: {data.get('confidence', 'N/A')}%")
+                  f"Risk: {data.get('risk_level', 'N/A')} ({data.get('risk_score', 'N/A')}) -> {data.get('action', 'N/A')}")
         return success
     except Exception as e:
         print_test("ML Prediction (Suspicious)", False, str(e))
@@ -268,7 +267,7 @@ def test_llm_prediction():
         data = response.json()
         
         success = response.status_code == 200
-        msg = f"Reasoning: {data.get('reasoning', 'N/A')[:60]}..." if success else f"Error: {data.get('error', 'Unknown')}"
+        msg = f"Risk: {data.get('risk_level', 'N/A')}, Explanation: {(data.get('explanation', 'N/A') or '')[:60]}..." if success else f"Error: {data.get('error', 'Unknown')}"
         
         print_test("LLM Prediction", success, msg)
         return success

@@ -1,27 +1,24 @@
-#!/bin/bash
 # UPI Fraud Detection - Setup & Run (Linux)
-# Usage: ./setup_and_run_linux.sh
+# Usage: ./bin/setup_and_run_linux.sh  OR  from project root: bin/setup_and_run_linux.sh
 
 set -e
-cd "$(dirname "$0")"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
 
 echo "======================================================================"
 echo " UPI FRAUD DETECTION - SETUP & RUN (Linux)"
 echo "======================================================================"
 
-# Create venv if missing
 if [ ! -d venv ]; then
     echo "Creating virtual environment..."
-    python3 -m venv venv
+    python3.9 -m venv venv
 fi
 
 source venv/bin/activate
 
-# Install dependencies
 echo "Installing dependencies..."
 pip install -q -r requirements.txt
 
-# Train models (and generate data) if not already present
 if [ ! -f models/best_model_random_forest.pkl ] || [ ! -f models/preprocessor.pkl ]; then
     echo ""
     echo "Training models (this may take a few minutes)..."
@@ -35,7 +32,6 @@ else
     echo "Models found. Skip training. (Delete models/ to retrain.)"
 fi
 
-# Start dashboard
 echo "======================================================================"
 echo " UPI FRAUD DETECTION - WEB DASHBOARD"
 echo "======================================================================"
