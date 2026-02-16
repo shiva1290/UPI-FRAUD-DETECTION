@@ -75,6 +75,7 @@ htmlcov/
 bin/
 .cursorignore
 logs/
+docs/
 
 # LaTeX files
 main.tex

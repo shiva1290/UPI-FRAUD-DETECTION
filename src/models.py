@@ -1,17 +1,27 @@
 """
-Machine Learning Models for UPI Fraud Detection.
+Machine Learning Models for UPI Fraud Risk Assessment.
 Uses model registry (OCP) and visualizer (SRP).
 """
 
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    confusion_matrix, classification_report, roc_auc_score, roc_curve
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix,
+    classification_report,
+    roc_auc_score,
+    roc_curve,
+    precision_recall_curve,
+    average_precision_score,
 )
 from imblearn.over_sampling import SMOTE
 import joblib
 
+import matplotlib
+matplotlib.use("Agg")  # Use non-interactive backend to avoid Tkinter issues
 import matplotlib.pyplot as plt
 from model_registry import create_model, DEFAULT_MODEL_TYPES
 from model_visualizer import ModelVisualizer
@@ -29,6 +39,9 @@ class FraudDetectionModel:
 
     def train(self, X_train, y_train, use_smote=False):
         """Train the model."""
+        import time
+        train_start = time.time()
+        
         if use_smote:
             print("Applying SMOTE for class balancing...")
             smote = SMOTE(random_state=self.random_state)
@@ -36,8 +49,13 @@ class FraudDetectionModel:
             print(f"After SMOTE - Class distribution: {np.bincount(y_train)}")
 
         print(f"Training {self.model_type} model...")
+        if len(X_train) > 100000:
+            print(f"  Large dataset ({len(X_train):,} samples) - this may take a few minutes...")
+        
         self.model.fit(X_train, y_train)
-        print("✓ Training completed!")
+        
+        train_time = time.time() - train_start
+        print(f"✓ Training completed in {train_time:.2f} seconds ({train_time/60:.2f} minutes)!")
 
     def predict(self, X):
         """Make predictions."""
@@ -54,13 +72,19 @@ class FraudDetectionModel:
         """Evaluate model performance."""
         y_pred_proba = self.predict_proba(X_test)
         y_pred = (y_pred_proba >= threshold).astype(int)
+        # Core scalar metrics (used in CSV/model comparison)
+        roc_auc = roc_auc_score(y_test, y_pred_proba) if len(np.unique(y_test)) > 1 else 0
+        pr_auc = average_precision_score(y_test, y_pred_proba) if len(np.unique(y_test)) > 1 else 0
         metrics = {
             'accuracy': accuracy_score(y_test, y_pred),
             'precision': precision_score(y_test, y_pred, zero_division=0),
             'recall': recall_score(y_test, y_pred, zero_division=0),
             'f1_score': f1_score(y_test, y_pred, zero_division=0),
-            'roc_auc': roc_auc_score(y_test, y_pred_proba) if len(np.unique(y_test)) > 1 else 0,
-            'confusion_matrix': confusion_matrix(y_test, y_pred)
+            # ROC-AUC: discrimination ability across thresholds
+            'roc_auc': roc_auc,
+            # PR-AUC (average precision): focuses on fraud (positive) class; better for imbalance
+            'pr_auc': pr_auc,
+            'confusion_matrix': confusion_matrix(y_test, y_pred),
         }
         self.performance_metrics = metrics
         return metrics
@@ -162,7 +186,8 @@ class ModelComparison:
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
             print(f"✓ Comparison plot saved to {save_path}")
-        plt.show()
+        # Do not call plt.show() in non-interactive / training context
+        plt.close(fig)
         return metrics_df
 
     def get_best_model(self, metric='f1_score'):

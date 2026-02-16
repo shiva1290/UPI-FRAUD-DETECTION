@@ -26,6 +26,20 @@ from models import FraudDetectionModel, ModelComparison
 from llm_detector import LLMFraudDetector
 from feature_importance_store import FeatureImportanceStore
 from confusion_matrix_store import ConfusionMatrixStore
+from pr_curve_store import PrecisionRecallCurveStore
+from cost_analysis import (
+    DEFAULT_FP_COST,
+    DEFAULT_FN_COST,
+    compute_expected_loss,
+    build_cost_vs_threshold_curve,
+    CostCurveStore,
+)
+from shap_explainer import ShapExplainer
+from shap_store import ShapStore
+from external_benchmark import run_external_benchmarks
+from concept_drift_simulator import ConceptDriftSimulator
+from pr_tradeoff_analyzer import PRTradeoffAnalyzer
+import json
 
 def main(use_llm=False):
     """Main training pipeline with LLM comparison"""
@@ -104,6 +118,29 @@ def main(use_llm=False):
     print("\n📊 Test Set Performance:")
     comparison.evaluate_all_models(X_test, y_test)
     
+    # Cost-sensitive evaluation on test set (same thresholds/costs for all models)
+    print("\n[4b/6] COST-SENSITIVE EVALUATION (TEST SET)")
+    print("-"*70)
+    for model_name, metrics in comparison.results.items():
+        cm = metrics.get("confusion_matrix")
+        if cm is None:
+            continue
+        loss = compute_expected_loss(
+            cm,
+            fp_cost=DEFAULT_FP_COST,
+            fn_cost=DEFAULT_FN_COST,
+            total_samples=len(y_test),
+        )
+        metrics["expected_cost_per_txn"] = loss["cost_per_txn"]
+        metrics["expected_cost_per_1000"] = loss["cost_per_1000"]
+        metrics["fp_cost"] = float(DEFAULT_FP_COST)
+        metrics["fn_cost"] = float(DEFAULT_FN_COST)
+        print(
+            f"Model: {model_name.upper()} | "
+            f"Cost/txn: {loss['cost_per_txn']:.2f} | "
+            f"Cost/1,000 txns: {loss['cost_per_1000']:.2f}"
+        )
+
     # Get best ML model
     best_ml_model, best_model_name = comparison.get_best_model(metric='f1_score')
     models_dir = os.path.join(os.path.dirname(__file__), '..', 'models')
@@ -197,6 +234,29 @@ def main(use_llm=False):
             traceback.print_exc()
             llm_detector = None
     
+    # Save Precision–Recall curves for all models (test set)
+    print("\n[5/6] PRECISION–RECALL CURVES (TEST SET)")
+    print("-"*70)
+    pr_curves = []
+    for model_name, model in comparison.models.items():
+        # Use test set scores for consistent comparison
+        y_scores = model.predict_proba(X_test)
+        from sklearn.metrics import precision_recall_curve, average_precision_score
+
+        precision, recall, _ = precision_recall_curve(y_test, y_scores)
+        pr_auc = average_precision_score(y_test, y_scores) if len(np.unique(y_test)) > 1 else 0
+        pr_curves.append(
+            {
+                "model": model_name,
+                "precision": precision.tolist(),
+                "recall": recall.tolist(),
+                "pr_auc": float(pr_auc),
+            }
+        )
+        print(f"  {model_name.upper()}: PR-AUC = {pr_auc:.4f}")
+    PrecisionRecallCurveStore.save(pr_curves, "../results/pr_curves.json")
+    print("✓ PR curves saved to ../results/pr_curves.json")
+
     # Step 6: Results and Visualization
     print("\n[6/6] GENERATING RESULTS AND VISUALIZATIONS")
     print("-"*70)
@@ -204,7 +264,7 @@ def main(use_llm=False):
     # Save comparison plot
     results_df = comparison.plot_comparison(save_path='../results/model_comparison.png')
     
-    # Save results to CSV
+    # Save results to CSV (includes PR-AUC and cost-sensitive metrics)
     results_df.to_csv('../results/model_performance.csv')
     print("✓ Results saved to ../results/model_performance.csv")
     
@@ -221,6 +281,19 @@ def main(use_llm=False):
         X_test, y_test,
         save_path=f'../results/roc_curve_{best_model_name}.png'
     )
+
+    # Cost vs threshold curve for the selected model (test set)
+    print("\nBuilding cost vs threshold curve for selected model (test set)...")
+    y_scores_best = best_ml_model.predict_proba(X_test)
+    cost_curve = build_cost_vs_threshold_curve(
+        y_true=y_test,
+        y_scores=y_scores_best,
+        fp_cost=DEFAULT_FP_COST,
+        fn_cost=DEFAULT_FN_COST,
+        num_points=50,
+    )
+    CostCurveStore.save(cost_curve, best_model_name, "../results/cost_vs_threshold.json")
+    print("✓ Cost vs threshold curve saved to ../results/cost_vs_threshold.json")
     
     # Extract and store feature importance
     if best_model_name in ['random_forest', 'xgboost', 'gradient_boost']:
@@ -234,6 +307,79 @@ def main(use_llm=False):
         )
         if extracted:
             FeatureImportanceStore.save(*extracted, '../results/feature_importance.json')
+
+    # SHAP explainability for Random Forest (global only; local disabled for stability)
+    if best_model_name == 'random_forest':
+        try:
+            print("\n[Explainability] Computing SHAP explanations for Random Forest (global only)...")
+            inner_model = getattr(best_ml_model, "model", best_ml_model)
+            feature_names = preprocessor.feature_names
+
+            # Global SHAP (use training data as background)
+            global_shap = ShapExplainer.compute_global(
+                inner_model=inner_model,
+                X_background=X_train,
+                feature_names=feature_names,
+                max_samples=1000,
+            )
+            ShapStore.save_global(global_shap, "../results/shap_global.json")
+            print("✓ Global SHAP feature importance saved to ../results/shap_global.json")
+        except ImportError as e:
+            print(f"⚠️ SHAP not available: {e}")
+        except Exception as e:
+            print(f"⚠️ Error computing global SHAP explanations: {e}")
+
+    # External dataset benchmarks (e.g., ULB Credit Card, PaySim)
+    print("\n[6b/6] RUNNING EXTERNAL DATASET BENCHMARKS (if datasets are available)")
+    _src_dir = os.path.dirname(os.path.abspath(__file__))
+    ext_results = run_external_benchmarks(_src_dir)
+    
+    # Concept Drift Simulation
+    print("\n[6c/6] CONCEPT DRIFT SIMULATION")
+    print("-"*70)
+    try:
+        drift_results = ConceptDriftSimulator.simulate_drift(
+            X_original=X_test,
+            y_original=y_test,
+            model=best_ml_model,  # Pass the wrapper, not inner model
+            feature_names=preprocessor.feature_names,
+            num_periods=10,
+            drift_strength=0.1,
+        )
+        drift_path = "../results/concept_drift.json"
+        os.makedirs(os.path.dirname(drift_path) or ".", exist_ok=True)
+        with open(drift_path, "w") as f:
+            json.dump({"drift_performance": drift_results}, f, indent=2)
+        print(f"✓ Concept drift simulation saved to {drift_path}")
+        print(f"  Performance degradation over {len(drift_results)} periods simulated")
+    except Exception as e:
+        print(f"⚠️ Error in concept drift simulation: {e}")
+    
+    # PR Tradeoff Comparison (RF vs XGBoost)
+    print("\n[6d/6] PRECISION-RECALL TRADEOFF COMPARISON (RF vs XGBoost)")
+    print("-"*70)
+    try:
+        rf_model = comparison.models.get("random_forest")
+        xgb_model = comparison.models.get("xgboost")
+        if rf_model and xgb_model:
+            # predict_proba already returns 1D array (positive class probabilities)
+            y_scores_rf = rf_model.predict_proba(X_test)
+            y_scores_xgb = xgb_model.predict_proba(X_test)
+            pr_tradeoff = PRTradeoffAnalyzer.compare_models(
+                y_true=y_test,
+                y_scores_rf=y_scores_rf,
+                y_scores_xgb=y_scores_xgb,
+            )
+            tradeoff_path = "../results/pr_tradeoff.json"
+            os.makedirs(os.path.dirname(tradeoff_path) or ".", exist_ok=True)
+            with open(tradeoff_path, "w") as f:
+                json.dump(pr_tradeoff, f, indent=2)
+            print(f"✓ PR tradeoff comparison saved to {tradeoff_path}")
+            print(f"  Compared {len(pr_tradeoff['thresholds'])} thresholds")
+        else:
+            print("⚠️ RF or XGBoost model not available for comparison")
+    except Exception as e:
+        print(f"⚠️ Error in PR tradeoff analysis: {e}")
     
     # Final Summary
     print("\n" + "="*70)

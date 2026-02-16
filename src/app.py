@@ -8,6 +8,7 @@ import sys
 import logging
 import uuid
 import time
+import json
 from datetime import datetime
 from functools import wraps
 import traceback
@@ -32,6 +33,12 @@ from explanation_generator import ExplanationGenerator
 from metrics_analysis import get_metrics_guide, get_ml_vs_llm_comparison
 from prediction_store import append as store_append, find_by_id as store_find, get_recent as store_get_recent
 from prediction_logger import FilePredictionLogger
+from pr_curve_store import PrecisionRecallCurveStore
+from cost_analysis import CostCurveStore
+from shap_store import ShapStore
+from explanation_comparison import ExplanationComparator
+from explanation_rating_store import ExplanationRatingStore
+from shap_explainer import ShapExplainer
 
 # Project root for resolving data/results paths (works from any cwd)
 _APP_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -209,7 +216,18 @@ try:
     import csv
     model_performance = []
     perf_path = os.path.join(_APP_BASE, 'results', 'model_performance.csv')
-    _metric_keys = {'accuracy', 'precision', 'recall', 'f1_score', 'roc_auc'}
+    _metric_keys = {
+        'accuracy',
+        'precision',
+        'recall',
+        'f1_score',
+        'roc_auc',
+        'pr_auc',
+        'expected_cost_per_txn',
+        'expected_cost_per_1000',
+        'fp_cost',
+        'fn_cost',
+    }
     with open(perf_path, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -228,10 +246,11 @@ try:
                 continue
             # Ensure numeric fields are numbers for JSON/charts
             for key in _metric_keys:
-                if key in row and row[key] not in ('', None):
+                if key in row and row[key] not in ('', None, ''):
                     try:
                         row[key] = float(row[key])
                     except (TypeError, ValueError):
+                        # leave as-is if conversion fails
                         pass
             model_performance.append(row)
     logger.info(f"✓ Loaded performance data for {len(model_performance)} models")
@@ -552,6 +571,87 @@ def get_model_performance():
     """Get model performance metrics"""
     return jsonify(model_performance)
 
+
+@app.route('/api/pr_curves')
+@handle_errors
+@rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
+def get_pr_curves():
+    """
+    Get precision–recall curves for all ML models.
+    Returns {"curves": [...]} or [] if not available.
+    """
+    path = os.path.join(_APP_BASE, 'results', 'pr_curves.json')
+    data = PrecisionRecallCurveStore.load(path)
+    if not data:
+        return jsonify([])
+    return jsonify(data)
+
+
+@app.route('/api/cost_curve')
+@handle_errors
+@rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
+def get_cost_curve():
+    """
+    Get cost vs threshold curve for the selected model.
+    Returns dict with thresholds and total_cost_per_1000, or None.
+    """
+    path = os.path.join(_APP_BASE, 'results', 'cost_vs_threshold.json')
+    data = CostCurveStore.load(path)
+    if not data:
+        return jsonify(None)
+    return jsonify(data)
+
+
+@app.route('/api/shap_global')
+@handle_errors
+@rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
+def get_shap_global():
+    """
+    Get global SHAP feature importance for the selected Random Forest model.
+    Returns {"features": [...], "importance": [...]} or None.
+    """
+    path = os.path.join(_APP_BASE, 'results', 'shap_global.json')
+    data = ShapStore.load_global(path)
+    if not data:
+        return jsonify(None)
+    return jsonify(data)
+
+
+@app.route('/api/shap_example')
+@handle_errors
+@rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
+def get_shap_example():
+    """
+    Get one local SHAP explanation for a fraud transaction.
+    Returns feature names, values, and SHAP contributions, or None.
+    """
+    path = os.path.join(_APP_BASE, 'results', 'shap_local_example.json')
+    data = ShapStore.load_local(path)
+    if not data:
+        return jsonify(None)
+    return jsonify(data)
+
+
+@app.route('/api/external_benchmark')
+@handle_errors
+@rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
+def get_external_benchmark():
+    """
+    Get external dataset benchmark results, if available.
+    Returns a list of per-dataset metrics (dataset, samples, fraud_rate, F1, ROC-AUC, etc.)
+    or [] when no external benchmark file is present.
+    """
+    path = os.path.join(_APP_BASE, 'results', 'external_benchmark.csv')
+    if not os.path.exists(path):
+        return jsonify([])
+    try:
+        df = pd.read_csv(path)
+        # Ensure JSON-serializable
+        return jsonify(df.to_dict(orient='records'))
+    except Exception as e:
+        logger.warning(f"Could not load external benchmark results: {str(e)}")
+        return jsonify([])
+
 @app.route('/api/confusion_matrix')
 @handle_errors
 @rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
@@ -563,6 +663,156 @@ def get_confusion_matrix():
         return jsonify(None)
     matrix, model_name = result
     return jsonify({'matrix': matrix, 'model': model_name})
+
+
+@app.route('/api/explanation_comparison', methods=['POST'])
+@handle_errors
+@rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
+def get_explanation_comparison():
+    """
+    Compare SHAP and LLM explanations for a transaction.
+    Expects JSON: {transaction_data, shap_data, llm_reasoning, llm_risk_factors}
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        comparison = ExplanationComparator.compare_explanations(
+            shap_data=data.get('shap_data', {}),
+            llm_reasoning=data.get('llm_reasoning', ''),
+            llm_risk_factors=data.get('llm_risk_factors', []),
+            transaction_data=data.get('transaction_data', {}),
+        )
+        return jsonify(comparison)
+    except Exception as e:
+        logger.error(f"Error comparing explanations: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/concept_drift')
+@handle_errors
+@rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
+def get_concept_drift():
+    """Get concept drift simulation results showing performance degradation over time."""
+    path = os.path.join(_APP_BASE, 'results', 'concept_drift.json')
+    if not os.path.exists(path):
+        return jsonify(None)
+    try:
+        with open(path, 'r') as f:
+            data = json.load(f)
+        return jsonify(data)
+    except Exception as e:
+        logger.warning(f"Could not load concept drift data: {str(e)}")
+        return jsonify(None)
+
+
+@app.route('/api/explanation_rating', methods=['POST'])
+@handle_errors
+@rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
+def save_explanation_rating():
+    """Save a human rating for explanation quality (1-5 scale)."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        explanation_type = data.get('explanation_type')  # 'shap' or 'llm'
+        transaction_id = data.get('transaction_id', str(uuid.uuid4()))
+        rating = int(data.get('rating', 0))
+        comments = data.get('comments', '')
+        
+        if rating < 1 or rating > 5:
+            return jsonify({'error': 'Rating must be between 1 and 5'}), 400
+        
+        if explanation_type not in ['shap', 'llm']:
+            return jsonify({'error': 'explanation_type must be "shap" or "llm"'}), 400
+        
+        path = os.path.join(_APP_BASE, 'results', 'explanation_ratings.json')
+        ExplanationRatingStore.save_rating(
+            explanation_type=explanation_type,
+            transaction_id=transaction_id,
+            rating=rating,
+            comments=comments,
+            path=path,
+        )
+        return jsonify({'success': True, 'message': 'Rating saved'})
+    except Exception as e:
+        logger.error(f"Error saving rating: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/explanation_ratings')
+@handle_errors
+@rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
+def get_explanation_ratings():
+    """Get average explanation quality ratings."""
+    path = os.path.join(_APP_BASE, 'results', 'explanation_ratings.json')
+    averages = ExplanationRatingStore.get_average_ratings(path)
+    all_ratings = ExplanationRatingStore.load_all(path) or []
+    return jsonify({
+        'averages': averages,
+        'total_ratings': len(all_ratings),
+        'all_ratings': all_ratings[-20:],  # Last 20 ratings
+    })
+
+
+@app.route('/api/pr_tradeoff')
+@handle_errors
+@rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
+def get_pr_tradeoff():
+    """Get Precision-Recall tradeoff comparison between RF and XGBoost."""
+    path = os.path.join(_APP_BASE, 'results', 'pr_tradeoff.json')
+    if not os.path.exists(path):
+        return jsonify(None)
+    try:
+        with open(path, 'r') as f:
+            data = json.load(f)
+        return jsonify(data)
+    except Exception as e:
+        logger.warning(f"Could not load PR tradeoff data: {str(e)}")
+        return jsonify(None)
+
+
+@app.route('/api/compute_shap_local', methods=['POST'])
+@handle_errors
+@rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
+def compute_shap_local():
+    """Compute local SHAP explanation for a transaction."""
+    if ml_model is None or preprocessor is None:
+        return jsonify({'error': 'ML model not available'}), 503
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        clean_data = validate_transaction_data(data)
+        
+        # Transform transaction data
+        X_transformed = preprocessor.transform(pd.DataFrame([clean_data]))
+        
+        # Get inner model
+        inner_model = getattr(ml_model, 'model', ml_model)
+        if not hasattr(inner_model, 'predict_proba'):
+            return jsonify({'error': 'Model does not support probability prediction'}), 400
+        
+        # Compute SHAP
+        feature_names = preprocessor.feature_names if hasattr(preprocessor, 'feature_names') else [f'Feature_{i}' for i in range(X_transformed.shape[1])]
+        true_label = data.get('is_fraud', 0)  # Default to 0 if not provided
+        
+        shap_data = ShapExplainer.compute_local(
+            inner_model=inner_model,
+            X_row=X_transformed.iloc[0] if hasattr(X_transformed, 'iloc') else X_transformed[0],
+            feature_names=feature_names,
+            true_label=int(true_label),
+        )
+        
+        return jsonify(shap_data)
+    except Exception as e:
+        logger.error(f"Error computing local SHAP: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 
 @app.errorhandler(404)
 def not_found(e):
