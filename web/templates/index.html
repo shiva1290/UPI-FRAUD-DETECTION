@@ -90,11 +90,188 @@
                                 <th class="hoverable" title="{{ metrics_guide.metrics_definitions.precision }} {{ metrics_guide.threshold_tradeoff }}">Precision</th>
                                 <th class="hoverable" title="{{ metrics_guide.metrics_definitions.recall }} {{ metrics_guide.moderate_recall.content }}">Recall</th>
                                 <th class="hoverable" title="{{ metrics_guide.metrics_definitions.f1_score }}">F1-Score</th>
+                                <th class="hoverable" title="{{ metrics_guide.metrics_definitions.pr_auc }}">PR-AUC</th>
                                 <th class="hoverable" title="{{ metrics_guide.metrics_definitions.roc_auc }}">ROC-AUC</th>
                                 <th class="hoverable" title="Fraction of correct predictions. Less reliable for imbalanced fraud datasets.">Accuracy</th>
                             </tr>
                         </thead>
                         <tbody id="modelTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Cost-Sensitive Evaluation -->
+            <div class="section">
+                <h2 class="section-title">
+                    Cost-Sensitive Evaluation
+                    <span class="info-icon" title="False negatives (missed fraud) are costlier than false positives. We use cost assumptions to compare models and select thresholds that minimise expected financial loss.">ⓘ</span>
+                </h2>
+                <div class="charts-row">
+                    <div class="chart-card">
+                        <h3>Precision–Recall Curve (All Models)</h3>
+                        <canvas id="prCurveChart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Cost vs Threshold (Selected Model)</h3>
+                        <canvas id="costThresholdChart"></canvas>
+                    </div>
+                </div>
+                <div class="model-table-container">
+                    <table class="model-table" id="costTable">
+                        <thead>
+                            <tr>
+                                <th>Model</th>
+                                <th>FN Cost</th>
+                                <th>FP Cost</th>
+                                <th>Expected Cost / Txn</th>
+                                <th>Expected Cost / 1,000 Txns</th>
+                            </tr>
+                        </thead>
+                        <tbody id="costTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- SHAP Explainability -->
+            <div class="section">
+                <h2 class="section-title">
+                    SHAP Explainability (Random Forest)
+                    <span class="info-icon" title="Global SHAP importance shows which features matter most overall for the fraud class.">ⓘ</span>
+                </h2>
+                <div class="charts-row">
+                    <div class="chart-card">
+                        <h3>Global SHAP Feature Importance</h3>
+                        <canvas id="shapGlobalChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- External Dataset Benchmarks -->
+            <div class="section">
+                <h2 class="section-title">
+                    External Dataset Benchmarks
+                    <span class="info-icon" title="Same Random Forest model evaluated on external fraud datasets (e.g., ULB Credit Card, PaySim). Differences in F1 and ROC-AUC across datasets reflect varying fraud rates, feature spaces, and noise levels.">ⓘ</span>
+                </h2>
+                <p class="section-desc">
+                    Upload <code>creditcard.csv</code> (ULB Credit Card) or <code>paysim.csv</code> to the <code>data/</code> folder and re-run training to populate this table.
+                </p>
+                <div class="model-table-container">
+                    <table class="model-table" id="externalBenchmarkTable">
+                        <thead>
+                            <tr>
+                                <th>Dataset</th>
+                                <th>Samples</th>
+                                <th>Fraud Rate</th>
+                                <th>F1-Score</th>
+                                <th>ROC-AUC</th>
+                            </tr>
+                        </thead>
+                        <tbody id="externalBenchmarkBody">
+                            <tr><td colspan="5" class="loading">No external benchmarks yet. Place datasets in <code>data/</code> and run training.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- LLM vs SHAP Comparison -->
+            <div class="section">
+                <h2 class="section-title">
+                    LLM vs SHAP Explanation Comparison
+                    <span class="info-icon" title="Compare SHAP (quantitative feature contributions) and LLM (natural language reasoning) explanations for the same transaction. Alignment score indicates how many top SHAP features are mentioned by the LLM.">ⓘ</span>
+                </h2>
+                <div id="explanationComparisonContainer">
+                    <p class="section-desc">Generate a prediction first, then request LLM explanation to see side-by-side comparison.</p>
+                    <div id="comparisonContent" style="display:none;">
+                        <div class="comparison-grid">
+                            <div class="comparison-card">
+                                <h3>SHAP Explanation</h3>
+                                <div id="shapComparisonContent"></div>
+                            </div>
+                            <div class="comparison-card">
+                                <h3>LLM Explanation</h3>
+                                <div id="llmComparisonContent"></div>
+                            </div>
+                        </div>
+                        <div class="alignment-score">
+                            <strong>Alignment Score:</strong> <span id="alignmentScore">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Concept Drift Simulation -->
+            <div class="section">
+                <h2 class="section-title">
+                    Concept Drift Simulation
+                    <span class="info-icon" title="Shows how model performance degrades over time as data distribution changes. Simulates gradual shifts in feature distributions (e.g., amount, velocity, location) over 10 time periods.">ⓘ</span>
+                </h2>
+                <div class="chart-container">
+                    <canvas id="conceptDriftChart"></canvas>
+                </div>
+                <p class="section-desc" id="driftDescription" style="margin-top: 1rem;"></p>
+            </div>
+
+            <!-- Explanation Quality Rating -->
+            <div class="section">
+                <h2 class="section-title">
+                    Explanation Quality Rating
+                    <span class="info-icon" title="Human evaluation of explanation quality. Rate SHAP and LLM explanations on a 1-5 scale (1=Poor, 5=Excellent) based on clarity, completeness, and usefulness.">ⓘ</span>
+                </h2>
+                <div id="ratingContainer">
+                    <div class="rating-stats">
+                        <div class="rating-stat">
+                            <strong>SHAP Average:</strong> <span id="shapAvgRating">-</span>/5.0
+                            <span class="rating-count" id="shapRatingCount">(0 ratings)</span>
+                        </div>
+                        <div class="rating-stat">
+                            <strong>LLM Average:</strong> <span id="llmAvgRating">-</span>/5.0
+                            <span class="rating-count" id="llmRatingCount">(0 ratings)</span>
+                        </div>
+                    </div>
+                    <div class="rating-form">
+                        <h4>Rate an Explanation</h4>
+                        <select id="ratingType">
+                            <option value="shap">SHAP</option>
+                            <option value="llm">LLM</option>
+                        </select>
+                        <input type="text" id="ratingTransactionId" placeholder="Transaction ID (optional)">
+                        <select id="ratingValue">
+                            <option value="1">1 - Poor</option>
+                            <option value="2">2 - Fair</option>
+                            <option value="3">3 - Good</option>
+                            <option value="4">4 - Very Good</option>
+                            <option value="5">5 - Excellent</option>
+                        </select>
+                        <textarea id="ratingComments" placeholder="Comments (optional)"></textarea>
+                        <button onclick="submitRating()">Submit Rating</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PR Tradeoff Comparison -->
+            <div class="section">
+                <h2 class="section-title">
+                    Precision-Recall Tradeoff Comparison (RF vs XGBoost)
+                    <span class="info-icon" title="Compare Random Forest and XGBoost across different decision thresholds. Shows how precision and recall trade off at each threshold level, helping identify optimal operating points.">ⓘ</span>
+                </h2>
+                <div class="chart-container">
+                    <canvas id="prTradeoffChart"></canvas>
+                </div>
+                <div class="model-table-container" style="margin-top: 1rem;">
+                    <table class="model-table" id="prTradeoffTable">
+                        <thead>
+                            <tr>
+                                <th>Threshold</th>
+                                <th>RF Precision</th>
+                                <th>RF Recall</th>
+                                <th>XGBoost Precision</th>
+                                <th>XGBoost Recall</th>
+                            </tr>
+                        </thead>
+                        <tbody id="prTradeoffBody">
+                            <tr><td colspan="5" class="loading">Loading...</td></tr>
                         </tbody>
                     </table>
                 </div>

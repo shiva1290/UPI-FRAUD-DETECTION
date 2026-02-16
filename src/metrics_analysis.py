@@ -68,7 +68,14 @@ def get_metrics_guide() -> dict:
             "precision": "Of transactions flagged as fraud, how many were actually fraud?",
             "recall": "Of all actual frauds, how many did we catch? Moderate recall (~48%) limits false alarms.",
             "f1_score": "Harmonic mean of precision and recall; balances both.",
-            "roc_auc": "Model's discrimination ability across thresholds—how well it ranks fraud vs legitimate—not accuracy.",
+            "pr_auc": (
+                "Area under the Precision–Recall curve (average precision). "
+                "Focuses on performance for the positive (fraud) class and is more informative than ROC-AUC on imbalanced data."
+            ),
+            "roc_auc": (
+                "Model's discrimination ability across thresholds—how well it ranks fraud vs legitimate—not accuracy. "
+                "On highly imbalanced fraud data, ROC-AUC can look high even when precision on frauds is poor; PR-AUC is more sensitive."
+            ),
         },
     }
 

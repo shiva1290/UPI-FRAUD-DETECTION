@@ -5,6 +5,13 @@ document.addEventListener('DOMContentLoaded', function() {
     loadStats();
     loadModelPerformance();
     loadConfusionMatrix();
+    loadPRCurves();
+    loadCostCurve();
+    loadShapGlobal();
+    loadExternalBenchmark();
+    loadConceptDrift();
+    loadPRTradeoff();
+    loadExplanationRatings();
     loadHourlyFraud();
     loadFeatureImportance();
     loadRecentPredictions();
@@ -40,7 +47,7 @@ async function loadModelPerformance() {
         const response = await fetch('/api/model_performance');
         const models = await response.json();
         
-        // Create table
+        // Create metrics table
         const tbody = document.getElementById('modelTableBody');
         tbody.innerHTML = '';
         
@@ -68,13 +75,14 @@ async function loadModelPerformance() {
                 row.classList.add('best-model');
             }
             
-            // Column order: Precision, Recall, F1, ROC-AUC, Accuracy (accuracy last)
+            // Column order: Precision, Recall, F1, PR-AUC, ROC-AUC, Accuracy (accuracy last)
             row.innerHTML = `
                 <td><span class="model-name">${modelName}${isRandomForest ? ' <span class="selected-badge">Selected</span>' : ''}</span></td>
                 <td>${(model.precision * 100).toFixed(2)}%</td>
                 <td>${(model.recall * 100).toFixed(2)}%</td>
                 <td>${(model.f1_score * 100).toFixed(2)}%</td>
-                <td>${model.roc_auc ? (model.roc_auc * 100).toFixed(2) + '%' : 'N/A'}</td>
+                <td>${model.pr_auc != null ? (model.pr_auc * 100).toFixed(2) + '%' : 'N/A'}</td>
+                <td>${model.roc_auc != null ? (model.roc_auc * 100).toFixed(2) + '%' : 'N/A'}</td>
                 <td class="accuracy-cell">${(model.accuracy * 100).toFixed(2)}%</td>
             `;
             tbody.appendChild(row);
@@ -84,7 +92,7 @@ async function loadModelPerformance() {
             bestModel.classList.add('best-model');
         }
         
-        // Create chart
+        // Create metrics bar chart
         const ctx = document.getElementById('modelPerformanceChart').getContext('2d');
         const formatModelLabel = (name) => (name || '').trim()
             ? (name || '').trim().split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
@@ -123,6 +131,13 @@ async function loadModelPerformance() {
                         borderWidth: 2
                     },
                     {
+                        label: 'PR-AUC',
+                        data: models.map(m => (m.pr_auc != null ? m.pr_auc : 0) * 100),
+                        backgroundColor: 'rgba(52, 211, 153, 0.7)',
+                        borderColor: 'rgba(16, 185, 129, 1)',
+                        borderWidth: 2
+                    },
+                    {
                         label: 'Accuracy',
                         data: models.map(m => m.accuracy * 100),
                         backgroundColor: 'rgba(156, 163, 175, 0.6)',
@@ -152,6 +167,34 @@ async function loadModelPerformance() {
                 }
             }
         });
+
+        // Populate cost-sensitive table (expected financial loss)
+        const costBody = document.getElementById('costTableBody');
+        if (costBody) {
+            costBody.innerHTML = '';
+            models.forEach(model => {
+                const row = document.createElement('tr');
+                const rawNameInner = (model.model || '').trim().toLowerCase();
+                const modelNameInner = rawNameInner
+                    ? rawNameInner.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')
+                    : 'Unknown';
+                const fnCost = model.fn_cost != null ? model.fn_cost : null;
+                const fpCost = model.fp_cost != null ? model.fp_cost : null;
+                const costPerTxn = model.expected_cost_per_txn != null ? model.expected_cost_per_txn : null;
+                const costPerK = model.expected_cost_per_1000 != null
+                    ? model.expected_cost_per_1000
+                    : (costPerTxn != null ? costPerTxn * 1000.0 : null);
+
+                row.innerHTML = `
+                    <td><span class="model-name">${modelNameInner}</span></td>
+                    <td>${fnCost != null ? '₹' + fnCost.toFixed(0) : '-'}</td>
+                    <td>${fpCost != null ? '₹' + fpCost.toFixed(0) : '-'}</td>
+                    <td>${costPerTxn != null ? '₹' + costPerTxn.toFixed(2) : '-'}</td>
+                    <td>${costPerK != null ? '₹' + costPerK.toFixed(2) : '-'}</td>
+                `;
+                costBody.appendChild(row);
+            });
+        }
         
     } catch (error) {
         console.error('Error loading model performance:', error);
@@ -195,6 +238,245 @@ async function loadConfusionMatrix() {
         container.style.display = 'block';
     } catch (error) {
         console.error('Error loading confusion matrix:', error);
+    }
+}
+
+// Load Precision–Recall curves for all models
+async function loadPRCurves() {
+    try {
+        const response = await fetch('/api/pr_curves');
+        const payload = await response.json();
+        if (!payload || !payload.curves || !payload.curves.length) {
+            return;
+        }
+        const curves = payload.curves;
+        const canvas = document.getElementById('prCurveChart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+
+        const colorPalette = [
+            'rgba(16, 185, 129, 1)',
+            'rgba(245, 158, 11, 1)',
+            'rgba(239, 68, 68, 1)',
+            'rgba(59, 130, 246, 1)',
+            'rgba(147, 51, 234, 1)',
+        ];
+
+        const datasets = curves.map((curve, idx) => {
+            const color = colorPalette[idx % colorPalette.length];
+            const rec = curve.recall || [];
+            const prec = curve.precision || [];
+            const points = rec.map((r, i) => ({
+                x: r * 100.0,
+                y: (prec[i] || 0) * 100.0,
+            }));
+            const name = (curve.model || 'model').toString().replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+            return {
+                label: `${name} (PR-AUC ${(curve.pr_auc * 100).toFixed(1)}%)`,
+                data: points,
+                borderColor: color,
+                backgroundColor: color.replace('1)', '0.1)'),
+                fill: false,
+                tension: 0.2,
+            };
+        });
+
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                datasets: datasets,
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                    },
+                    title: {
+                        display: true,
+                        text: 'Precision–Recall Curve (All Models)',
+                        font: { size: 14, weight: 'bold' },
+                    },
+                },
+                scales: {
+                    x: {
+                        type: 'linear',
+                        position: 'bottom',
+                        title: {
+                            display: true,
+                            text: 'Recall (%)',
+                        },
+                        min: 0,
+                        max: 100,
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Precision (%)',
+                        },
+                        min: 0,
+                        max: 100,
+                    },
+                },
+            },
+        });
+    } catch (error) {
+        console.error('Error loading PR curves:', error);
+    }
+}
+
+// Load cost vs threshold curve for selected model
+async function loadCostCurve() {
+    try {
+        const response = await fetch('/api/cost_curve');
+        const data = await response.json();
+        if (!data || !data.thresholds || !data.total_cost_per_1000) {
+            return;
+        }
+        const canvas = document.getElementById('costThresholdChart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+
+        const thresholds = data.thresholds.map(t => Number(t.toFixed(2)));
+        const costs = data.total_cost_per_1000.map(c => Number(c.toFixed(2)));
+
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: thresholds,
+                datasets: [
+                    {
+                        label: 'Expected Cost per 1,000 Txns',
+                        data: costs,
+                        borderColor: 'rgba(239, 68, 68, 1)',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3,
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'top',
+                    },
+                    title: {
+                        display: true,
+                        text: 'Cost vs Decision Threshold (Selected Model)',
+                    },
+                },
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Decision Threshold',
+                        },
+                        min: 0,
+                        max: 1,
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Expected Cost per 1,000 Transactions',
+                        },
+                        beginAtZero: true,
+                    },
+                },
+            },
+        });
+    } catch (error) {
+        console.error('Error loading cost curve:', error);
+    }
+}
+
+// Load global SHAP importance (Random Forest)
+async function loadShapGlobal() {
+    try {
+        const response = await fetch('/api/shap_global');
+        const data = await response.json();
+        if (!data || !data.features || !data.importance) {
+            return;
+        }
+        const canvas = document.getElementById('shapGlobalChart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+
+        const labels = data.features;
+        const imp = data.importance;
+
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Mean |SHAP| (global importance)',
+                    data: imp,
+                    backgroundColor: 'rgba(139, 92, 246, 0.8)',
+                    borderColor: 'rgba(139, 92, 246, 1)',
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    title: {
+                        display: true,
+                        text: 'Global SHAP Feature Importance (Fraud class)',
+                    },
+                },
+                scales: {
+                    x: { beginAtZero: true },
+                },
+            },
+        });
+    } catch (error) {
+        console.error('Error loading global SHAP:', error);
+    }
+}
+
+// Local SHAP explanation (per-transaction) is currently disabled for stability.
+
+// Load external dataset benchmark results (if available)
+async function loadExternalBenchmark() {
+    try {
+        const response = await fetch('/api/external_benchmark');
+        const data = await response.json();
+        const tbody = document.getElementById('externalBenchmarkBody');
+        if (!tbody) return;
+
+        tbody.innerHTML = '';
+        if (!data || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="loading">No external benchmark results found. Place datasets in <code>data/</code> and run training.</td></tr>';
+            return;
+        }
+
+        data.forEach(row => {
+            const tr = document.createElement('tr');
+            const fraudRate = row.fraud_rate != null ? (Number(row.fraud_rate) * 100).toFixed(2) + '%' : '-';
+            const f1 = row.f1_score != null ? (Number(row.f1_score) * 100).toFixed(2) + '%' : '-';
+            const roc = row.roc_auc != null ? (Number(row.roc_auc) * 100).toFixed(2) + '%' : '-';
+            tr.innerHTML = `
+                <td>${row.dataset || '-'}</td>
+                <td>${row.samples != null ? Number(row.samples).toLocaleString() : '-'}</td>
+                <td>${fraudRate}</td>
+                <td>${f1}</td>
+                <td>${roc}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    } catch (error) {
+        console.error('Error loading external benchmark:', error);
+        const tbody = document.getElementById('externalBenchmarkBody');
+        if (tbody) {
+            tbody.innerHTML = '<tr><td colspan="5" class="loading">Error loading external benchmark.</td></tr>';
+        }
     }
 }
 
@@ -446,6 +728,35 @@ async function analyzeWithLLM(predictionId) {
         return;
     }
     try {
+        // Get the original prediction to access transaction_data
+        const recentResponse = await fetch('/api/recent_predictions');
+        const recentPredictions = await recentResponse.json();
+        const originalPred = recentPredictions.find(p => p.id === predictionId);
+        
+        if (!originalPred || !originalPred.transaction_data) {
+            alert('Could not find original prediction data.');
+            return;
+        }
+        
+        // Compute SHAP explanation
+        let shapData = null;
+        try {
+            const shapResponse = await fetch('/api/compute_shap_local', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ...originalPred.transaction_data,
+                    is_fraud: originalPred.risk_level === 'High' ? 1 : 0
+                })
+            });
+            if (shapResponse.ok) {
+                shapData = await shapResponse.json();
+            }
+        } catch (e) {
+            console.warn('Could not compute SHAP:', e);
+        }
+        
+        // Get LLM explanation
         const response = await fetch('/api/predict_llm', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -456,7 +767,19 @@ async function analyzeWithLLM(predictionId) {
             alert('LLM Error: ' + result.error);
             return;
         }
+        
         displayPrediction(result, result.llm_analyzed ? 'ML + LLM' : 'LLM');
+        
+        // Show comparison if both SHAP and LLM are available
+        if (shapData && result.explanation) {
+            showExplanationComparison(
+                shapData,
+                result.explanation,
+                result.risk_factors || [],
+                originalPred.transaction_data
+            );
+        }
+        
         loadRecentPredictions();
     } catch (error) {
         console.error('Error analyzing with LLM:', error);
@@ -641,4 +964,329 @@ function displayPrediction(result, source) {
 // Display LLM prediction (uses same risk format: risk_score, risk_level, explanation)
 function displayLLMPrediction(result) {
     displayPrediction(result, '🤖 LLM (Groq API)');
+}
+
+// Load Concept Drift Simulation
+async function loadConceptDrift() {
+    try {
+        const response = await fetch('/api/concept_drift');
+        const data = await response.json();
+        
+        if (!data || !data.drift_performance) {
+            document.getElementById('driftDescription').textContent = 'Concept drift simulation not available. Run training to generate.';
+            return;
+        }
+        
+        const periods = data.drift_performance.map(d => d.period);
+        const accuracy = data.drift_performance.map(d => d.accuracy);
+        const precision = data.drift_performance.map(d => d.precision);
+        const recall = data.drift_performance.map(d => d.recall);
+        const f1 = data.drift_performance.map(d => d.f1_score);
+        
+        const ctx = document.getElementById('conceptDriftChart').getContext('2d');
+        if (window.conceptDriftChart) {
+            window.conceptDriftChart.destroy();
+        }
+        
+        window.conceptDriftChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: periods,
+                datasets: [
+                    {
+                        label: 'Accuracy',
+                        data: accuracy,
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1
+                    },
+                    {
+                        label: 'Precision',
+                        data: precision,
+                        borderColor: 'rgb(255, 99, 132)',
+                        tension: 0.1
+                    },
+                    {
+                        label: 'Recall',
+                        data: recall,
+                        borderColor: 'rgb(54, 162, 235)',
+                        tension: 0.1
+                    },
+                    {
+                        label: 'F1-Score',
+                        data: f1,
+                        borderColor: 'rgb(255, 206, 86)',
+                        tension: 0.1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Performance Degradation Over Time (Concept Drift)'
+                    },
+                    legend: {
+                        display: true
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: false,
+                        min: 0,
+                        max: 1
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time Period'
+                        }
+                    }
+                }
+            }
+        });
+        
+        const initialF1 = f1[0];
+        const finalF1 = f1[f1.length - 1];
+        const degradation = ((initialF1 - finalF1) / initialF1 * 100).toFixed(1);
+        document.getElementById('driftDescription').textContent = 
+            `F1-Score degradation: ${degradation}% (from ${initialF1.toFixed(3)} to ${finalF1.toFixed(3)}) over ${periods.length} periods.`;
+    } catch (error) {
+        console.error('Error loading concept drift:', error);
+        document.getElementById('driftDescription').textContent = 'Error loading concept drift data.';
+    }
+}
+
+// Load PR Tradeoff Comparison
+async function loadPRTradeoff() {
+    try {
+        const response = await fetch('/api/pr_tradeoff');
+        const data = await response.json();
+        
+        if (!data || !data.thresholds) {
+            document.getElementById('prTradeoffBody').innerHTML = 
+                '<tr><td colspan="5" class="loading">PR tradeoff data not available. Run training to generate.</td></tr>';
+            return;
+        }
+        
+        // Update table
+        const tbody = document.getElementById('prTradeoffBody');
+        tbody.innerHTML = '';
+        data.thresholds.forEach((thresh, idx) => {
+            const rf = data.random_forest[idx];
+            const xgb = data.xgboost[idx];
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${thresh.toFixed(2)}</td>
+                <td>${rf.precision.toFixed(3)}</td>
+                <td>${rf.recall.toFixed(3)}</td>
+                <td>${xgb.precision.toFixed(3)}</td>
+                <td>${xgb.recall.toFixed(3)}</td>
+            `;
+            tbody.appendChild(row);
+        });
+        
+        // Create chart
+        const ctx = document.getElementById('prTradeoffChart').getContext('2d');
+        if (window.prTradeoffChart) {
+            window.prTradeoffChart.destroy();
+        }
+        
+        window.prTradeoffChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.thresholds.map(t => t.toFixed(2)),
+                datasets: [
+                    {
+                        label: 'RF Precision',
+                        data: data.random_forest.map(r => r.precision),
+                        borderColor: 'rgb(255, 99, 132)',
+                        yAxisID: 'y',
+                        tension: 0.1
+                    },
+                    {
+                        label: 'RF Recall',
+                        data: data.random_forest.map(r => r.recall),
+                        borderColor: 'rgb(255, 99, 132)',
+                        borderDash: [5, 5],
+                        yAxisID: 'y',
+                        tension: 0.1
+                    },
+                    {
+                        label: 'XGBoost Precision',
+                        data: data.xgboost.map(r => r.precision),
+                        borderColor: 'rgb(54, 162, 235)',
+                        yAxisID: 'y',
+                        tension: 0.1
+                    },
+                    {
+                        label: 'XGBoost Recall',
+                        data: data.xgboost.map(r => r.recall),
+                        borderColor: 'rgb(54, 162, 235)',
+                        borderDash: [5, 5],
+                        yAxisID: 'y',
+                        tension: 0.1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Precision-Recall Tradeoff: RF vs XGBoost'
+                    },
+                    legend: {
+                        display: true
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: false,
+                        min: 0,
+                        max: 1,
+                        title: {
+                            display: true,
+                            text: 'Precision / Recall'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Threshold'
+                        }
+                    }
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Error loading PR tradeoff:', error);
+        document.getElementById('prTradeoffBody').innerHTML = 
+            '<tr><td colspan="5" class="loading">Error loading PR tradeoff data.</td></tr>';
+    }
+}
+
+// Load Explanation Ratings
+async function loadExplanationRatings() {
+    try {
+        const response = await fetch('/api/explanation_ratings');
+        const data = await response.json();
+        
+        const shapAvg = data.averages.shap || 0;
+        const llmAvg = data.averages.llm || 0;
+        const shapCount = data.all_ratings.filter(r => r.explanation_type === 'shap').length;
+        const llmCount = data.all_ratings.filter(r => r.explanation_type === 'llm').length;
+        
+        document.getElementById('shapAvgRating').textContent = shapAvg.toFixed(2);
+        document.getElementById('llmAvgRating').textContent = llmAvg.toFixed(2);
+        document.getElementById('shapRatingCount').textContent = `(${shapCount} ratings)`;
+        document.getElementById('llmRatingCount').textContent = `(${llmCount} ratings)`;
+    } catch (error) {
+        console.error('Error loading explanation ratings:', error);
+    }
+}
+
+// Submit Rating
+async function submitRating() {
+    try {
+        const explanationType = document.getElementById('ratingType').value;
+        const transactionId = document.getElementById('ratingTransactionId').value || '';
+        const rating = parseInt(document.getElementById('ratingValue').value);
+        const comments = document.getElementById('ratingComments').value;
+        
+        const response = await fetch('/api/explanation_rating', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                explanation_type: explanationType,
+                transaction_id: transactionId || 'manual_' + Date.now(),
+                rating: rating,
+                comments: comments
+            })
+        });
+        
+        if (response.ok) {
+            alert('Rating submitted successfully!');
+            document.getElementById('ratingTransactionId').value = '';
+            document.getElementById('ratingComments').value = '';
+            document.getElementById('ratingValue').value = '3';
+            loadExplanationRatings();
+        } else {
+            const error = await response.json();
+            alert('Error: ' + (error.error || 'Failed to submit rating'));
+        }
+    } catch (error) {
+        console.error('Error submitting rating:', error);
+        alert('Error submitting rating. Please try again.');
+    }
+}
+
+// Show Explanation Comparison (called when LLM explanation is generated)
+async function showExplanationComparison(shapData, llmReasoning, llmRiskFactors, transactionData) {
+    try {
+        const response = await fetch('/api/explanation_comparison', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                shap_data: shapData,
+                llm_reasoning: llmReasoning,
+                llm_risk_factors: llmRiskFactors,
+                transaction_data: transactionData
+            })
+        });
+        
+        if (!response.ok) {
+            console.error('Failed to compare explanations');
+            return;
+        }
+        
+        const comparison = await response.json();
+        
+        // Display SHAP explanation
+        const shapContent = document.getElementById('shapComparisonContent');
+        const shapTop = comparison.shap_explanation.top_features.slice(0, 10);
+        shapContent.innerHTML = `
+            <div class="shap-features">
+                <p><strong>Predicted Probability:</strong> ${comparison.shap_explanation.predicted_proba.toFixed(3)}</p>
+                <p><strong>Base Value:</strong> ${comparison.shap_explanation.base_value.toFixed(3)}</p>
+                <h4>Top Contributing Features:</h4>
+                <ul>
+                    ${shapTop.map(f => `
+                        <li>
+                            <strong>${f.feature}:</strong> 
+                            <span style="color: ${f.shap_value > 0 ? '#e74c3c' : '#27ae60'}">
+                                ${f.shap_value > 0 ? '+' : ''}${f.shap_value.toFixed(4)}
+                            </span>
+                        </li>
+                    `).join('')}
+                </ul>
+            </div>
+        `;
+        
+        // Display LLM explanation
+        const llmContent = document.getElementById('llmComparisonContent');
+        llmContent.innerHTML = `
+            <div class="llm-explanation">
+                <p><strong>Reasoning:</strong></p>
+                <p>${comparison.llm_explanation.reasoning.replace(/\n/g, '<br>')}</p>
+                <h4>Risk Factors:</h4>
+                <ul>
+                    ${comparison.llm_explanation.risk_factors.map(f => `<li>${f}</li>`).join('')}
+                </ul>
+                <p><strong>Mentioned Features:</strong> ${comparison.llm_explanation.mentioned_features.join(', ') || 'None'}</p>
+            </div>
+        `;
+        
+        // Display alignment score
+        document.getElementById('alignmentScore').textContent = 
+            `${(comparison.comparison.alignment_score * 100).toFixed(1)}% (${comparison.comparison.alignment_count}/${comparison.comparison.shap_top_count} features aligned)`;
+        
+        document.getElementById('comparisonContent').style.display = 'block';
+    } catch (error) {
+        console.error('Error showing explanation comparison:', error);
+    }
 }

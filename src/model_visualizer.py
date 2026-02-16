@@ -3,6 +3,8 @@ Model visualization (SRP: single responsibility for plotting).
 """
 
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")  # Non-interactive backend for server / training runs
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, roc_curve, roc_auc_score
@@ -58,5 +60,5 @@ class ModelVisualizer:
         plt.xticks(range(top_n), [feature_names[i] for i in indices], rotation=45, ha='right')
         plt.ylabel('Importance')
         plt.tight_layout()
-        plt.show()
+        # Do not call plt.show() in backend/server context
         plt.close()

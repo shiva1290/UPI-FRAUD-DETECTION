@@ -397,6 +397,29 @@ body {
     color: var(--danger);
 }
 
+.shap-local-container {
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.shap-summary {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+}
+
+.shap-table td {
+    font-size: 0.8rem;
+}
+
+.shap-pos {
+    color: var(--danger);
+}
+
+.shap-neg {
+    color: var(--success);
+}
+
 .info-icon {
     display: inline-flex;
     align-items: center;
@@ -1321,4 +1344,140 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
     background: var(--primary);
+}
+
+/* Explanation Comparison Styles */
+.comparison-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-top: 1rem;
+}
+
+.comparison-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+.comparison-card h3 {
+    color: var(--primary-light);
+    margin-bottom: 1rem;
+    font-size: 1.1rem;
+}
+
+.shap-features ul,
+.llm-explanation ul {
+    list-style: none;
+    padding: 0;
+    margin: 0.5rem 0;
+}
+
+.shap-features li,
+.llm-explanation li {
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.shap-features li:last-child,
+.llm-explanation li:last-child {
+    border-bottom: none;
+}
+
+.alignment-score {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    text-align: center;
+    font-size: 1.1rem;
+}
+
+.alignment-score span {
+    color: var(--accent-teal);
+    font-weight: 600;
+}
+
+/* Rating Styles */
+.rating-stats {
+    display: flex;
+    gap: 2rem;
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    background: var(--bg-card);
+    border-radius: 8px;
+}
+
+.rating-stat {
+    flex: 1;
+    padding: 0.75rem;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+}
+
+.rating-stat strong {
+    color: var(--primary-light);
+}
+
+.rating-count {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin-left: 0.5rem;
+}
+
+.rating-form {
+    background: var(--bg-card);
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+}
+
+.rating-form h4 {
+    color: var(--primary-light);
+    margin-bottom: 1rem;
+}
+
+.rating-form select,
+.rating-form input,
+.rating-form textarea {
+    width: 100%;
+    padding: 0.75rem;
+    margin-bottom: 1rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: inherit;
+}
+
+.rating-form textarea {
+    min-height: 80px;
+    resize: vertical;
+}
+
+.rating-form button {
+    background: var(--primary);
+    color: white;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: background 0.2s;
+}
+
+.rating-form button:hover {
+    background: var(--primary-light);
+}
+
+@media (max-width: 768px) {
+    .comparison-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .rating-stats {
+        flex-direction: column;
+        gap: 1rem;
+    }
 }
