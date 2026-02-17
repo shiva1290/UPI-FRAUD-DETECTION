@@ -11,7 +11,6 @@ document.addEventListener('DOMContentLoaded', function() {
     loadExternalBenchmark();
     loadConceptDrift();
     loadPRTradeoff();
-    loadExplanationRatings();
     loadHourlyFraud();
     loadFeatureImportance();
     loadRecentPredictions();
@@ -972,8 +971,28 @@ async function loadConceptDrift() {
         const response = await fetch('/api/concept_drift');
         const data = await response.json();
         
-        if (!data || !data.drift_performance) {
-            document.getElementById('driftDescription').textContent = 'Concept drift simulation not available. Run training to generate.';
+        if (!response.ok) {
+            const errorMsg = data?.error || `HTTP ${response.status}: ${response.statusText}`;
+            const descEl = document.getElementById('driftDescription');
+            if (descEl) {
+                descEl.textContent = `Error: ${errorMsg}`;
+            }
+            return;
+        }
+        
+        // Check for errors first
+        if (!response.ok || !data || !data.drift_performance || !Array.isArray(data.drift_performance) || data.drift_performance.length === 0) {
+            const errorMsg = data?.error || 'Concept drift simulation not available. Run training to generate.';
+            const descEl = document.getElementById('driftDescription');
+            if (descEl) {
+                descEl.textContent = errorMsg;
+            }
+            // Still try to show an empty chart or hide it
+            const canvas = document.getElementById('conceptDriftChart');
+            if (canvas && window.conceptDriftChart && typeof window.conceptDriftChart.destroy === 'function') {
+                window.conceptDriftChart.destroy();
+            }
+            window.conceptDriftChart = null;
             return;
         }
         
@@ -983,8 +1002,14 @@ async function loadConceptDrift() {
         const recall = data.drift_performance.map(d => d.recall);
         const f1 = data.drift_performance.map(d => d.f1_score);
         
-        const ctx = document.getElementById('conceptDriftChart').getContext('2d');
-        if (window.conceptDriftChart) {
+        const canvas = document.getElementById('conceptDriftChart');
+        if (!canvas) {
+            console.error('conceptDriftChart canvas not found');
+            return;
+        }
+        
+        const ctx = canvas.getContext('2d');
+        if (window.conceptDriftChart && typeof window.conceptDriftChart.destroy === 'function') {
             window.conceptDriftChart.destroy();
         }
         
@@ -1053,7 +1078,10 @@ async function loadConceptDrift() {
             `F1-Score degradation: ${degradation}% (from ${initialF1.toFixed(3)} to ${finalF1.toFixed(3)}) over ${periods.length} periods.`;
     } catch (error) {
         console.error('Error loading concept drift:', error);
-        document.getElementById('driftDescription').textContent = 'Error loading concept drift data.';
+        const descEl = document.getElementById('driftDescription');
+        if (descEl) {
+            descEl.textContent = `Error loading concept drift data: ${error.message || error}`;
+        }
     }
 }
 
@@ -1063,50 +1091,102 @@ async function loadPRTradeoff() {
         const response = await fetch('/api/pr_tradeoff');
         const data = await response.json();
         
-        if (!data || !data.thresholds) {
-            document.getElementById('prTradeoffBody').innerHTML = 
-                '<tr><td colspan="5" class="loading">PR tradeoff data not available. Run training to generate.</td></tr>';
+        // Check for errors first
+        if (!response.ok || !data || !data.thresholds || !Array.isArray(data.thresholds) || data.thresholds.length === 0) {
+            const errorMsg = data?.error || 'PR tradeoff data not available. Run training to generate.';
+            const tbody = document.getElementById('prTradeoffBody');
+            if (tbody) {
+                tbody.innerHTML = `<tr><td colspan="5" class="loading">${errorMsg}</td></tr>`;
+            }
+            // Destroy chart if it exists
+            const canvas = document.getElementById('prTradeoffChart');
+            if (canvas && window.prTradeoffChart && typeof window.prTradeoffChart.destroy === 'function') {
+                window.prTradeoffChart.destroy();
+            }
+            window.prTradeoffChart = null;
+            return;
+        }
+        
+        if (!data.random_forest || !data.xgboost || !Array.isArray(data.random_forest) || !Array.isArray(data.xgboost)) {
+            const errorMsg = data?.error || 'Invalid PR tradeoff data structure.';
+            const tbody = document.getElementById('prTradeoffBody');
+            if (tbody) {
+                tbody.innerHTML = `<tr><td colspan="5" class="loading">${errorMsg}</td></tr>`;
+            }
+            // Destroy chart if it exists
+            const canvas = document.getElementById('prTradeoffChart');
+            if (canvas && window.prTradeoffChart && typeof window.prTradeoffChart.destroy === 'function') {
+                window.prTradeoffChart.destroy();
+            }
+            window.prTradeoffChart = null;
             return;
         }
         
         // Update table
         const tbody = document.getElementById('prTradeoffBody');
+        if (!tbody) return;
+        
         tbody.innerHTML = '';
         data.thresholds.forEach((thresh, idx) => {
             const rf = data.random_forest[idx];
             const xgb = data.xgboost[idx];
+            
+            if (!rf || !xgb) return;
+            
             const row = document.createElement('tr');
             row.innerHTML = `
-                <td>${thresh.toFixed(2)}</td>
-                <td>${rf.precision.toFixed(3)}</td>
-                <td>${rf.recall.toFixed(3)}</td>
-                <td>${xgb.precision.toFixed(3)}</td>
-                <td>${xgb.recall.toFixed(3)}</td>
+                <td>${Number(thresh).toFixed(2)}</td>
+                <td>${rf.precision != null ? Number(rf.precision).toFixed(3) : '-'}</td>
+                <td>${rf.recall != null ? Number(rf.recall).toFixed(3) : '-'}</td>
+                <td>${xgb.precision != null ? Number(xgb.precision).toFixed(3) : '-'}</td>
+                <td>${xgb.recall != null ? Number(xgb.recall).toFixed(3) : '-'}</td>
             `;
             tbody.appendChild(row);
         });
         
         // Create chart
-        const ctx = document.getElementById('prTradeoffChart').getContext('2d');
-        if (window.prTradeoffChart) {
+        const canvas = document.getElementById('prTradeoffChart');
+        if (!canvas) {
+            console.error('prTradeoffChart canvas not found');
+            return;
+        }
+        
+        const ctx = canvas.getContext('2d');
+        if (window.prTradeoffChart && typeof window.prTradeoffChart.destroy === 'function') {
             window.prTradeoffChart.destroy();
         }
+        
+        // Filter out invalid data points
+        const validIndices = data.thresholds
+            .map((t, idx) => {
+                const rf = data.random_forest[idx];
+                const xgb = data.xgboost[idx];
+                return (rf && rf.precision != null && rf.recall != null && 
+                        xgb && xgb.precision != null && xgb.recall != null) ? idx : null;
+            })
+            .filter(idx => idx !== null);
+        
+        const validThresholds = validIndices.map(idx => Number(data.thresholds[idx]).toFixed(2));
+        const rfPrec = validIndices.map(idx => Number(data.random_forest[idx].precision));
+        const rfRec = validIndices.map(idx => Number(data.random_forest[idx].recall));
+        const xgbPrec = validIndices.map(idx => Number(data.xgboost[idx].precision));
+        const xgbRec = validIndices.map(idx => Number(data.xgboost[idx].recall));
         
         window.prTradeoffChart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: data.thresholds.map(t => t.toFixed(2)),
+                labels: validThresholds,
                 datasets: [
                     {
                         label: 'RF Precision',
-                        data: data.random_forest.map(r => r.precision),
+                        data: rfPrec,
                         borderColor: 'rgb(255, 99, 132)',
                         yAxisID: 'y',
                         tension: 0.1
                     },
                     {
                         label: 'RF Recall',
-                        data: data.random_forest.map(r => r.recall),
+                        data: rfRec,
                         borderColor: 'rgb(255, 99, 132)',
                         borderDash: [5, 5],
                         yAxisID: 'y',
@@ -1114,14 +1194,14 @@ async function loadPRTradeoff() {
                     },
                     {
                         label: 'XGBoost Precision',
-                        data: data.xgboost.map(r => r.precision),
+                        data: xgbPrec,
                         borderColor: 'rgb(54, 162, 235)',
                         yAxisID: 'y',
                         tension: 0.1
                     },
                     {
                         label: 'XGBoost Recall',
-                        data: data.xgboost.map(r => r.recall),
+                        data: xgbRec,
                         borderColor: 'rgb(54, 162, 235)',
                         borderDash: [5, 5],
                         yAxisID: 'y',
@@ -1161,65 +1241,10 @@ async function loadPRTradeoff() {
         });
     } catch (error) {
         console.error('Error loading PR tradeoff:', error);
-        document.getElementById('prTradeoffBody').innerHTML = 
-            '<tr><td colspan="5" class="loading">Error loading PR tradeoff data.</td></tr>';
-    }
-}
-
-// Load Explanation Ratings
-async function loadExplanationRatings() {
-    try {
-        const response = await fetch('/api/explanation_ratings');
-        const data = await response.json();
-        
-        const shapAvg = data.averages.shap || 0;
-        const llmAvg = data.averages.llm || 0;
-        const shapCount = data.all_ratings.filter(r => r.explanation_type === 'shap').length;
-        const llmCount = data.all_ratings.filter(r => r.explanation_type === 'llm').length;
-        
-        document.getElementById('shapAvgRating').textContent = shapAvg.toFixed(2);
-        document.getElementById('llmAvgRating').textContent = llmAvg.toFixed(2);
-        document.getElementById('shapRatingCount').textContent = `(${shapCount} ratings)`;
-        document.getElementById('llmRatingCount').textContent = `(${llmCount} ratings)`;
-    } catch (error) {
-        console.error('Error loading explanation ratings:', error);
-    }
-}
-
-// Submit Rating
-async function submitRating() {
-    try {
-        const explanationType = document.getElementById('ratingType').value;
-        const transactionId = document.getElementById('ratingTransactionId').value || '';
-        const rating = parseInt(document.getElementById('ratingValue').value);
-        const comments = document.getElementById('ratingComments').value;
-        
-        const response = await fetch('/api/explanation_rating', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                explanation_type: explanationType,
-                transaction_id: transactionId || 'manual_' + Date.now(),
-                rating: rating,
-                comments: comments
-            })
-        });
-        
-        if (response.ok) {
-            alert('Rating submitted successfully!');
-            document.getElementById('ratingTransactionId').value = '';
-            document.getElementById('ratingComments').value = '';
-            document.getElementById('ratingValue').value = '3';
-            loadExplanationRatings();
-        } else {
-            const error = await response.json();
-            alert('Error: ' + (error.error || 'Failed to submit rating'));
+        const tbody = document.getElementById('prTradeoffBody');
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="5" class="loading">Error loading PR tradeoff data: ${error.message || error}</td></tr>`;
         }
-    } catch (error) {
-        console.error('Error submitting rating:', error);
-        alert('Error submitting rating. Please try again.');
     }
 }
 
