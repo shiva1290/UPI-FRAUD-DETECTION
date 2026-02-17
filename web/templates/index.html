@@ -213,43 +213,6 @@
                 <p class="section-desc" id="driftDescription" style="margin-top: 1rem;"></p>
             </div>
 
-            <!-- Explanation Quality Rating -->
-            <div class="section">
-                <h2 class="section-title">
-                    Explanation Quality Rating
-                    <span class="info-icon" title="Human evaluation of explanation quality. Rate SHAP and LLM explanations on a 1-5 scale (1=Poor, 5=Excellent) based on clarity, completeness, and usefulness.">ⓘ</span>
-                </h2>
-                <div id="ratingContainer">
-                    <div class="rating-stats">
-                        <div class="rating-stat">
-                            <strong>SHAP Average:</strong> <span id="shapAvgRating">-</span>/5.0
-                            <span class="rating-count" id="shapRatingCount">(0 ratings)</span>
-                        </div>
-                        <div class="rating-stat">
-                            <strong>LLM Average:</strong> <span id="llmAvgRating">-</span>/5.0
-                            <span class="rating-count" id="llmRatingCount">(0 ratings)</span>
-                        </div>
-                    </div>
-                    <div class="rating-form">
-                        <h4>Rate an Explanation</h4>
-                        <select id="ratingType">
-                            <option value="shap">SHAP</option>
-                            <option value="llm">LLM</option>
-                        </select>
-                        <input type="text" id="ratingTransactionId" placeholder="Transaction ID (optional)">
-                        <select id="ratingValue">
-                            <option value="1">1 - Poor</option>
-                            <option value="2">2 - Fair</option>
-                            <option value="3">3 - Good</option>
-                            <option value="4">4 - Very Good</option>
-                            <option value="5">5 - Excellent</option>
-                        </select>
-                        <textarea id="ratingComments" placeholder="Comments (optional)"></textarea>
-                        <button onclick="submitRating()">Submit Rating</button>
-                    </div>
-                </div>
-            </div>
-
             <!-- PR Tradeoff Comparison -->
             <div class="section">
                 <h2 class="section-title">

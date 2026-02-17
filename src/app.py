@@ -37,7 +37,6 @@ from pr_curve_store import PrecisionRecallCurveStore
 from cost_analysis import CostCurveStore
 from shap_store import ShapStore
 from explanation_comparison import ExplanationComparator
-from explanation_rating_store import ExplanationRatingStore
 from shap_explainer import ShapExplainer
 
 # Project root for resolving data/results paths (works from any cwd)
@@ -697,64 +696,21 @@ def get_concept_drift():
     """Get concept drift simulation results showing performance degradation over time."""
     path = os.path.join(_APP_BASE, 'results', 'concept_drift.json')
     if not os.path.exists(path):
-        return jsonify(None)
+        return jsonify({'error': 'Concept drift data not found', 'drift_performance': None}), 404
     try:
         with open(path, 'r') as f:
             data = json.load(f)
+        # Validate data structure
+        if not isinstance(data, dict) or 'drift_performance' not in data:
+            logger.warning(f"Invalid concept drift data structure: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+            return jsonify({'error': 'Invalid data structure', 'drift_performance': None}), 500
         return jsonify(data)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error loading concept drift data: {str(e)}")
+        return jsonify({'error': 'Invalid JSON file', 'drift_performance': None}), 500
     except Exception as e:
-        logger.warning(f"Could not load concept drift data: {str(e)}")
-        return jsonify(None)
-
-
-@app.route('/api/explanation_rating', methods=['POST'])
-@handle_errors
-@rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
-def save_explanation_rating():
-    """Save a human rating for explanation quality (1-5 scale)."""
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-        
-        explanation_type = data.get('explanation_type')  # 'shap' or 'llm'
-        transaction_id = data.get('transaction_id', str(uuid.uuid4()))
-        rating = int(data.get('rating', 0))
-        comments = data.get('comments', '')
-        
-        if rating < 1 or rating > 5:
-            return jsonify({'error': 'Rating must be between 1 and 5'}), 400
-        
-        if explanation_type not in ['shap', 'llm']:
-            return jsonify({'error': 'explanation_type must be "shap" or "llm"'}), 400
-        
-        path = os.path.join(_APP_BASE, 'results', 'explanation_ratings.json')
-        ExplanationRatingStore.save_rating(
-            explanation_type=explanation_type,
-            transaction_id=transaction_id,
-            rating=rating,
-            comments=comments,
-            path=path,
-        )
-        return jsonify({'success': True, 'message': 'Rating saved'})
-    except Exception as e:
-        logger.error(f"Error saving rating: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/explanation_ratings')
-@handle_errors
-@rate_limit(max_per_minute=config.RATE_LIMIT_PER_MINUTE)
-def get_explanation_ratings():
-    """Get average explanation quality ratings."""
-    path = os.path.join(_APP_BASE, 'results', 'explanation_ratings.json')
-    averages = ExplanationRatingStore.get_average_ratings(path)
-    all_ratings = ExplanationRatingStore.load_all(path) or []
-    return jsonify({
-        'averages': averages,
-        'total_ratings': len(all_ratings),
-        'all_ratings': all_ratings[-20:],  # Last 20 ratings
-    })
+        logger.error(f"Could not load concept drift data: {str(e)}")
+        return jsonify({'error': str(e), 'drift_performance': None}), 500
 
 
 @app.route('/api/pr_tradeoff')
@@ -764,14 +720,24 @@ def get_pr_tradeoff():
     """Get Precision-Recall tradeoff comparison between RF and XGBoost."""
     path = os.path.join(_APP_BASE, 'results', 'pr_tradeoff.json')
     if not os.path.exists(path):
-        return jsonify(None)
+        return jsonify({'error': 'PR tradeoff data not found', 'thresholds': None}), 404
     try:
         with open(path, 'r') as f:
             data = json.load(f)
+        # Validate data structure
+        if not isinstance(data, dict) or 'thresholds' not in data:
+            logger.warning(f"Invalid PR tradeoff data structure: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+            return jsonify({'error': 'Invalid data structure', 'thresholds': None}), 500
+        if 'random_forest' not in data or 'xgboost' not in data:
+            logger.warning(f"Missing model data in PR tradeoff: {list(data.keys())}")
+            return jsonify({'error': 'Missing model data', 'thresholds': None}), 500
         return jsonify(data)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON decode error loading PR tradeoff data: {str(e)}")
+        return jsonify({'error': 'Invalid JSON file', 'thresholds': None}), 500
     except Exception as e:
-        logger.warning(f"Could not load PR tradeoff data: {str(e)}")
-        return jsonify(None)
+        logger.error(f"Could not load PR tradeoff data: {str(e)}")
+        return jsonify({'error': str(e), 'thresholds': None}), 500
 
 
 @app.route('/api/compute_shap_local', methods=['POST'])
