@@ -251,28 +251,53 @@ def test_response_time():
         print_test("Response Time", False, str(e))
         return False
 
-def test_llm_prediction():
-    """Test LLM prediction endpoint"""
+def test_llm_explanation():
+    """Test LLM explanation endpoint (ML score + SHAP + LLM text)"""
     try:
-        # Simple transaction for LLM analysis
+        # First get an ML prediction
         transaction = {
             "amount": 95000,
             "hour": 3,
             "day_of_week": 6,
-            "merchant_id": "SUSPICIOUS_STORE"
+            "is_weekend": 1,
+            "is_night": 1,
+            "transaction_velocity": 5,
+            "failed_attempts": 1,
         }
-        
-        print("  (Waiting for LLM response... this may take a few seconds)")
-        response = requests.post(f"{BASE_URL}/api/predict_llm", json=transaction)
-        data = response.json()
-        
-        success = response.status_code == 200
-        msg = f"Risk: {data.get('risk_level', 'N/A')}, Explanation: {(data.get('explanation', 'N/A') or '')[:60]}..." if success else f"Error: {data.get('error', 'Unknown')}"
-        
-        print_test("LLM Prediction", success, msg)
+
+        pred_resp = requests.post(f"{BASE_URL}/api/predict", json=transaction)
+        if pred_resp.status_code != 200:
+            print_test("LLM Explanation", False, f"Prediction failed: {pred_resp.status_code}")
+            return False
+        pred = pred_resp.json()
+
+        if pred.get("risk_score", 0) < 30:
+            print_test(
+                "LLM Explanation",
+                False,
+                f"Risk score too low for explanation: {pred.get('risk_score')}",
+            )
+            return False
+
+        print("  (Waiting for LLM explanation... this may take a few seconds)")
+        explain_resp = requests.post(
+            f"{BASE_URL}/api/explain",
+            json={"prediction_id": pred.get("id")},
+        )
+        data = explain_resp.json()
+
+        success = explain_resp.status_code == 200
+        msg = (
+            f"Risk: {data.get('risk_level', 'N/A')}, "
+            f"LLM: {(data.get('llm_explanation', '') or '')[:80]}..."
+            if success
+            else f"Error: {data.get('error', 'Unknown')}"
+        )
+
+        print_test("LLM Explanation", success, msg)
         return success
     except Exception as e:
-        print_test("LLM Prediction", False, str(e))
+        print_test("LLM Explanation", False, str(e))
         return False
 
 def run_all_tests():
@@ -293,7 +318,7 @@ def run_all_tests():
             test_ml_prediction_suspicious,
             test_ml_prediction_missing_fields,
             test_ml_prediction_invalid_types,
-            test_llm_prediction,
+            test_llm_explanation,
         ]),
         ("Performance & Load", [
             test_response_time,

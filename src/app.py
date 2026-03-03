@@ -189,7 +189,7 @@ def _init_feature_importance():
 
 _init_feature_importance()
 
-# Load LLM if enabled
+# Load LLM explanation helper if enabled
 llm_detector = None
 llm_init_error = None
 
@@ -205,7 +205,7 @@ if config.LLM_ENABLED:
         from llm_detector import LLMFraudDetector
         fi_names = _feature_importance_data['features'] if _feature_importance_data else None
         llm_detector = LLMFraudDetector(api_key=config.GROQ_API_KEY, model=config.LLM_MODEL, feature_names=fi_names)
-        logger.info(f"✓ LLM detector loaded: {config.LLM_MODEL}")
+        logger.info(f"✓ LLM explanation helper loaded: {config.LLM_MODEL}")
     except Exception as e:
         llm_init_error = str(e)
         logger.warning(f"LLM detector initialization failed: {str(e)}")
@@ -355,6 +355,129 @@ def _get_inner_model(model):
         return None
     return getattr(model, 'model', model)
 
+
+def _load_global_top_features(top_n: int = 5):
+    """
+    Fallback: load top features from global SHAP or feature importance.
+    Used when per-transaction SHAP is not available.
+    """
+    # 1) Try global SHAP from training
+    try:
+        path = os.path.join(_APP_BASE, 'results', 'shap_global.json')
+        data = ShapStore.load_global(path)
+        if data and isinstance(data, dict):
+            feats = data.get('features') or []
+            imps = data.get('importance') or []
+            k = min(top_n, len(feats), len(imps))
+            return [
+                {
+                    'name': str(feats[i]),
+                    'value': 0.0,
+                    'shap_value': float(imps[i]),
+                }
+                for i in range(k)
+            ]
+    except Exception as e:
+        logger.warning(f"Global SHAP fallback failed: {str(e)}")
+
+    # 2) Fallback to feature_importance.json (model-based)
+    try:
+        if _feature_importance_data:
+            feats = _feature_importance_data.get('features') or []
+            imps = _feature_importance_data.get('importance') or []
+            k = min(top_n, len(feats), len(imps))
+            return [
+                {
+                    'name': str(feats[i]),
+                    'value': 0.0,
+                    'shap_value': float(imps[i]),
+                }
+                for i in range(k)
+            ]
+    except Exception as e:
+        logger.warning(f"Feature importance fallback failed: {str(e)}")
+
+    # 3) As a last resort, use preprocessor feature names (no scores)
+    try:
+        if preprocessor is not None and hasattr(preprocessor, 'feature_names'):
+            feats = getattr(preprocessor, 'feature_names') or []
+            k = min(top_n, len(feats))
+            return [
+                {
+                    'name': str(feats[i]),
+                    'value': 0.0,
+                    'shap_value': 0.0,
+                }
+                for i in range(k)
+            ]
+    except Exception:
+        pass
+
+    return []
+
+
+def _compute_shap_top_features_for_transaction(transaction: dict, top_n: int = 5):
+    """
+    Compute top-n SHAP features for a single transaction.
+
+    Uses shap.TreeExplainer on the inner sklearn model and returns a list of
+    {name, value, shap_value} dicts sorted by absolute SHAP contribution.
+    """
+    if ml_model is None or preprocessor is None:
+        return _load_global_top_features(top_n)
+
+    try:
+        from feature_engineering import prepare_for_ml
+        import shap  # type: ignore
+        import numpy as _np  # type: ignore
+    except ImportError:
+        # SHAP library not available – use global/top-level importance instead.
+        return _load_global_top_features(top_n)
+
+    try:
+        X, _ = prepare_for_ml(preprocessor, transaction, fit=False)
+        # Ensure 2D
+        if hasattr(X, "shape") and len(X.shape) == 1:
+            X = _np.reshape(X, (1, -1))
+
+        inner_model = _get_inner_model(ml_model)
+        if inner_model is None:
+            return _load_global_top_features(top_n)
+
+        explainer = shap.TreeExplainer(inner_model)
+        shap_values = explainer.shap_values(X)
+
+        # Normalise SHAP output to a 1D array for the positive class.
+        if isinstance(shap_values, list):
+            arr = _np.asarray(shap_values[1] if len(shap_values) > 1 else shap_values[0])
+        else:
+            arr = _np.asarray(shap_values)
+
+        if arr.ndim == 2:
+            shap_for_pos = arr[0]  # (n_features,)
+        elif arr.ndim == 1:
+            shap_for_pos = arr
+        else:
+            logger.warning(f"Unexpected SHAP array shape for local explanation: {arr.shape}")
+            return _load_global_top_features(top_n)
+
+        feature_names = getattr(preprocessor, 'feature_names', None)
+        if not feature_names:
+            feature_names = [f'Feature_{i}' for i in range(len(shap_for_pos))]
+
+        indices = _np.argsort(_np.abs(shap_for_pos))[-top_n:][::-1]
+        top_features = []
+        for idx in indices:
+            top_features.append({
+                'name': str(feature_names[idx]),
+                'value': float(X[0][idx]),
+                'shap_value': float(shap_for_pos[idx]),
+            })
+        return top_features
+    except Exception as e:
+        logger.error(f"Error computing per-transaction SHAP, falling back to global: {str(e)}")
+        return _load_global_top_features(top_n)
+
 @app.route('/api/feature_importance')
 @handle_errors
 def get_feature_importance():
@@ -407,20 +530,26 @@ def get_recent_transactions():
 @app.route('/api/llm_samples')
 @handle_errors
 def get_llm_samples():
-    """Get LLM training samples with reasoning"""
+    """
+    Get recent LLM explanation samples with reasoning.
+    Uses in-memory prediction store; no batch LLM evaluation.
+    """
     try:
-        results_path = os.path.join(_APP_BASE, 'results', 'llm_predictions.csv')
-        if not os.path.exists(results_path):
-            return jsonify([])
-        df = pd.read_csv(results_path)
-        if 'llm_reasoning' not in df.columns or 'llm_prediction' not in df.columns:
-            return jsonify([])
-        # Build response with keys the dashboard expects (llm_risk_factors = risk_factors from CSV)
         samples = []
-        for _, row in df.head(5).iterrows():
-            rec = row.to_dict()
-            rec['llm_risk_factors'] = rec.get('risk_factors', '[]')
-            samples.append(rec)
+        recent = store_get_recent(100)
+        # Walk from newest to oldest
+        for pred in reversed(recent):
+            llm_text = pred.get('llm_explanation')
+            if not llm_text:
+                continue
+            samples.append({
+                'risk_score': pred.get('risk_score'),
+                'risk_level': pred.get('risk_level'),
+                'llm_reasoning': llm_text,
+                'llm_risk_factors': pred.get('llm_risk_factors', pred.get('risk_factors', [])),
+            })
+            if len(samples) >= 5:
+                break
         return jsonify(samples)
     except Exception as e:
         logger.error(f"Error loading LLM samples: {str(e)}")
@@ -463,6 +592,11 @@ def predict_ml():
         and llm_detector is not None
     )
 
+    # For flagged (Medium/High) transactions, compute and store top SHAP features once.
+    shap_top_features = []
+    if risk_level in ('Medium', 'High'):
+        shap_top_features = _compute_shap_top_features_for_transaction(clean_data, top_n=5)
+
     result = {
         'id': str(uuid.uuid4()),
         'risk_score': base['risk_score'],
@@ -478,6 +612,7 @@ def predict_ml():
         'suggest_llm': suggest_llm,
         'llm_analyzed': False,
         'ml_latency_ms': ml_latency_ms,
+        'shap_top_features': shap_top_features,
     }
 
     store_append(result)
@@ -487,74 +622,119 @@ def predict_ml():
 
     return jsonify(result)
 
-@app.route('/api/predict_llm', methods=['POST'])
+@app.route('/api/explain', methods=['POST'])
+@app.route('/api/predict_llm', methods=['POST'])  # backwards-compatible alias
 @handle_errors
 @require_api_key
 @rate_limit(max_per_minute=10)
-def predict_llm():
-    """LLM-based fraud prediction. Optionally updates an existing prediction by prediction_id."""
+def explain_transaction():
+    """
+    LLM explanation endpoint.
+
+    - Does NOT treat the LLM as a fraud classifier.
+    - Requires an ML risk score and SHAP top features.
+    - Triggers only when risk_score >= review_threshold (low_threshold).
+    """
     if llm_detector is None:
-        error_msg = "LLM detector not available."
+        error_msg = "LLM explanation helper not available."
         if not config.LLM_ENABLED:
             error_msg += " (LLM_ENABLED is False in config)"
         else:
             error_msg += f" (Initialization failed: {llm_init_error or 'Check server logs'})"
         return jsonify({'error': error_msg}), 503
 
+    if ml_model is None or preprocessor is None:
+        return jsonify({'error': 'ML model not available'}), 503
+
     data = request.get_json()
     if not data:
         raise ValueError("No data provided")
 
     prediction_id = data.get('prediction_id')
+    base_pred = None
+
     if prediction_id:
-        _, pred = store_find(prediction_id)
-        if pred is None:
+        _, base_pred = store_find(prediction_id)
+        if base_pred is None:
             return jsonify({'error': 'Prediction not found', 'prediction_id': prediction_id}), 404
-        clean_data = pred.get('transaction_data', {})
+        transaction = base_pred.get('transaction_data', {})
+        risk_score = float(base_pred.get('risk_score', 0.0))
+        risk_level = base_pred.get('risk_level')
+        action = base_pred.get('action')
     else:
-        clean_data = validate_transaction_data(data)
-
-    try:
-        t0 = time.perf_counter()
-        _, confidence, reasoning, risk_factors = llm_detector.predict_single(clean_data)
-        llm_latency_ms = round((time.perf_counter() - t0) * 1000, 2)
-        risk_score = round(float(confidence), 2)
-        assessment = risk_engine.assess(risk_score / 100.0)
-        contrib = []
-        if explanation_generator:
-            _, contrib = explanation_generator.generate(clean_data, risk_score)
-
-        result = {
+        # Direct explain for raw transaction (avoid in UI; kept for compatibility)
+        transaction = validate_transaction_data(data)
+        from ml_prediction import predict_fraud_probability
+        proba = predict_fraud_probability(ml_model, preprocessor, transaction)
+        assessment = risk_engine.assess(proba)
+        risk_score = assessment.risk_score
+        risk_level = assessment.risk_level
+        action = assessment.action
+        base_pred = {
+            'id': None,
             'risk_score': risk_score,
-            'risk_level': assessment.risk_level,
-            'action': assessment.action,
-            'explanation': reasoning,
-            'risk_factors': risk_factors if isinstance(risk_factors, list) else [],
-            'contributing_features': contrib,
-            'model': 'LLM (Groq)',
-            'timestamp': datetime.now().isoformat(),
-            'llm_latency_ms': llm_latency_ms,
+            'risk_level': risk_level,
+            'action': action,
+            'transaction_data': transaction,
         }
 
-        if prediction_id:
-            idx, pred = store_find(prediction_id)
-            if pred is not None and idx is not None:
-                pred.update({
-                    'explanation': reasoning,
-                    'risk_factors': result['risk_factors'],
-                    'contributing_features': result['contributing_features'],
-                    'llm_analyzed': True,
-                    'model': 'ML + LLM (Groq)',
-                    'llm_latency_ms': llm_latency_ms,
-                })
-                result = pred
-                prediction_logger.log(pred)
+    # Enforce review threshold: only explain when risk score is at or above review threshold
+    review_threshold = risk_engine.low_threshold
+    if risk_score < review_threshold:
+        return jsonify({
+            'error': 'Risk score below review threshold',
+            'message': f'LLM explanation is only available for risk_score >= {review_threshold:.1f}.',
+            'risk_score': risk_score,
+            'risk_level': risk_level,
+        }), 400
 
-        logger.info(f"LLM Risk: {assessment.risk_level} (score={risk_score}) -> {assessment.action}")
-        return jsonify(result)
+    # Use pre-computed SHAP features when available; otherwise compute on demand.
+    if base_pred is not None and base_pred.get('shap_top_features'):
+        top_features = base_pred['shap_top_features']
+    else:
+        top_features = _compute_shap_top_features_for_transaction(transaction, top_n=5)
+
+    # Call LLM for explanation only (no prediction/accuracy/recall)
+    try:
+        t0 = time.perf_counter()
+        reasoning, risk_factors = llm_detector.explain(
+            risk_score=risk_score,
+            top_features=top_features,
+        )
+        llm_latency_ms = round((time.perf_counter() - t0) * 1000, 2)
     except Exception as e:
-        logger.error(f"LLM prediction failed: {str(e)}")
-        return jsonify({'error': 'LLM prediction failed', 'message': str(e)}), 500
+        logger.error(f"LLM explanation failed: {str(e)}")
+        return jsonify({'error': 'LLM explanation failed', 'message': str(e)}), 500
+
+    result = {
+        'prediction_id': prediction_id,
+        'risk_score': risk_score,
+        'risk_level': risk_level,
+        'action': action,
+        'shap_top_features': top_features,
+        'llm_explanation': reasoning,
+        'llm_risk_factors': risk_factors,
+        'timestamp': datetime.now().isoformat(),
+        'llm_latency_ms': llm_latency_ms,
+    }
+
+    # If we have a stored prediction, mark it as explained and log it
+    if prediction_id and base_pred is not None:
+        idx, stored = store_find(prediction_id)
+        if stored is not None and idx is not None:
+            stored.update({
+                'llm_explanation': reasoning,
+                'llm_risk_factors': risk_factors,
+                'llm_analyzed': True,
+                'llm_latency_ms': llm_latency_ms,
+            })
+            prediction_logger.log(stored)
+
+    logger.info(
+        f"LLM explanation generated for risk_level={risk_level}, "
+        f"risk_score={risk_score:.1f}, prediction_id={prediction_id}"
+    )
+    return jsonify(result)
 
 @app.route('/api/recent_predictions')
 @handle_errors

@@ -23,7 +23,6 @@ warnings.filterwarnings('ignore')
 from data_generator import EnhancedUPIDataGenerator
 from preprocessor import UPIPreprocessor
 from models import FraudDetectionModel, ModelComparison
-from llm_detector import LLMFraudDetector
 from feature_importance_store import FeatureImportanceStore
 from confusion_matrix_store import ConfusionMatrixStore
 from pr_curve_store import PrecisionRecallCurveStore
@@ -41,8 +40,13 @@ from concept_drift_simulator import ConceptDriftSimulator
 from pr_tradeoff_analyzer import PRTradeoffAnalyzer
 import json
 
-def main(use_llm=False):
-    """Main training pipeline with LLM comparison"""
+def main(use_llm: bool = False):
+    """
+    Main training pipeline.
+
+    Note: LLM is no longer evaluated as a classifier here. It is used
+    only at API-time for explanations, not for batch prediction metrics.
+    """
     
     # Ensure output dirs exist (paths relative to src/)
     for d in ('../models', '../results', '../data'):
@@ -149,92 +153,7 @@ def main(use_llm=False):
     # Save again under default name so app config finds it without env change
     best_ml_model.save('../models/best_model_random_forest.pkl')
     
-    # Step 5: LLM-Based Detection (if enabled and API key is available)
-    print("\n[5/6] LLM-BASED FRAUD DETECTION")
-    print("-"*70)
-    
-    if not use_llm:
-        print("⚠️  LLM testing skipped (use --with-llm flag to enable)")
-        print("   Saves API costs. Run: python train.py --with-llm")
-        llm_detector = None
-    else:
-        try:
-            # Check and clean API Key
-            api_key = os.environ.get('GROQ_API_KEY')
-            
-            # Fallback: Try loading .env manually if not in environment
-            if not api_key:
-                env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
-                if os.path.exists(env_path):
-                    with open(env_path, 'r') as f:
-                        for line in f:
-                            if 'GROQ_API_KEY' in line and not line.strip().startswith('#'):
-                                _, val = line.strip().split('=', 1)
-                                # Strip quotes and whitespace so Groq accepts the key
-                                val = val.strip().strip('"').strip("'").replace('\r', '').replace('\n', '').strip()
-                                if val:
-                                    os.environ['GROQ_API_KEY'] = val
-                                    api_key = val
-                                break
-            
-            if api_key:
-                print(f"   ✓ API key detected.")
-
-            # Initialize LLM detector
-            llm_detector = LLMFraudDetector()
-            
-            # Get test data with original features for LLM
-            test_indices = X_test.index
-            test_data_original = processed_data.loc[test_indices].copy()
-            
-            # OPTIMIZE: Use only 100 samples with STRATIFIED sampling to preserve fraud rate
-            # This minimizes API costs while getting realistic performance metrics
-            print(f"\n💰 API Cost Optimization:")
-            print(f"   Using 100 stratified samples (3.75% fraud rate preserved)")
-            print(f"   Estimated API cost: ~100 requests instead of {len(test_data_original)}")
-            
-            # Stratified sampling to maintain fraud distribution
-            if len(test_data_original) > 100:
-                llm_sample, _ = train_test_split(
-                    test_data_original,
-                    test_size=len(test_data_original)-100,
-                    stratify=test_data_original['is_fraud'],
-                    random_state=42
-                )
-            else:
-                llm_sample = test_data_original
-            
-            fraud_count = llm_sample['is_fraud'].sum()
-            print(f"   Sample: {len(llm_sample)} transactions ({fraud_count} frauds, {fraud_count/len(llm_sample)*100:.2f}%)\n")
-            
-            # Run LLM detection on sample
-            llm_results = llm_detector.predict_batch(llm_sample, max_samples=100)
-            
-            # Save LLM results
-            llm_results.to_csv('../results/llm_predictions.csv', index=False)
-            print("✓ LLM results saved to ../results/llm_predictions.csv")
-            
-            # Show sample predictions with reasoning
-            llm_detector.analyze_sample_predictions(llm_results, n_samples=3)
-            
-            # LLM is an explanation module, not a classifier - do not add to ML comparison
-            if hasattr(llm_detector, 'metrics'):
-                print("\n✓ LLM explanation module metrics computed (not shown in classifier table)")
-            
-        except ValueError as e:
-            print(f"\n⚠️  Skipping LLM detection: {e}")
-            print("To enable LLM detection:")
-            print("  1. Get API key from https://console.groq.com/keys")
-            print("  2. Copy .env.example to .env")
-            print("  3. Add your GROQ_API_KEY to .env file")
-            llm_detector = None
-        except Exception as e:
-            print(f"\n⚠️  Error in LLM detection: {e}")
-            import traceback
-            traceback.print_exc()
-            llm_detector = None
-    
-    # Save Precision–Recall curves for all models (test set)
+    # Step 5: Precision–Recall curves for all models (test set)
     print("\n[5/6] PRECISION–RECALL CURVES (TEST SET)")
     print("-"*70)
     pr_curves = []
@@ -392,19 +311,11 @@ def main(use_llm=False):
         if metric != 'confusion_matrix':
             print(f"  {metric.capitalize()}: {value:.4f}")
     
-    if llm_detector and hasattr(llm_detector, 'metrics'):
-        print(f"\n🤖 LLM EXPLANATION MODULE (Groq API)")
-        print("-"*70)
-        print("  LLM is an explanation module, not a classifier.")
-        print("  It provides human-readable reasoning for medium/high-risk transactions.")
-    
     print("\n" + "="*70)
     print(f"📁 OUTPUT FILES:")
     print("-"*70)
     print(f"  ✓ ML Models: ../models/")
     print(f"  ✓ Performance Metrics: ../results/model_performance.csv")
-    if llm_detector:
-        print(f"  ✓ LLM Predictions: ../results/llm_predictions.csv")
     print(f"  ✓ Visualizations: ../results/*.png")
     print("="*70)
     
