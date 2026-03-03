@@ -1,39 +1,44 @@
 """
-LLM-Based Fraud Detector. Uses LLMClient abstraction (DIP).
+LLM-based explanation module.
+Uses LLMClient abstraction (DIP) to generate natural-language reasoning
+from a risk score and top SHAP features. It does NOT act as a classifier.
 """
 
 import os
 import json
-import time
-import pandas as pd
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from typing import List, Dict, Any, Tuple, Optional
 
 from llm_client import LLMClient, GroqLLMClient
 
 
-def _clean_api_key(key):
+def _clean_api_key(key: Optional[str]) -> Optional[str]:
     """Strip quotes, whitespace, and line endings from API key."""
     if not key:
         return key
     return key.strip().strip('"').strip("'").replace('\r', '').replace('\n', '')
 
 
-# Model features to align LLM reasoning with (amount, velocity, device change, etc.)
-DEFAULT_MODEL_FEATURES = [
-    'amount', 'amount_deviation_pct', 'transaction_velocity', 'device_change',
-    'location_change_km', 'failed_attempts', 'is_night', 'beneficiary_fan_in',
-    'is_new_beneficiary', 'reversed_attempts', 'is_weekend', 'approval_delay_sec'
-]
-
-
 class LLMFraudDetector:
-    """LLM fraud detector. Depends on LLMClient abstraction (DIP)."""
+    """
+    LLM explanation helper.
 
-    def __init__(self, api_key=None, model=None, client: LLMClient = None, feature_names=None):
+    Given a risk_score and top SHAP features, it asks the LLM to
+    produce reasoning and risk_factors. It does not return a fraud label
+    or compute accuracy/precision/recall.
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        client: Optional[LLMClient] = None,
+        feature_names: Optional[List[str]] = None,
+    ):
         raw = api_key or os.environ.get('GROQ_API_KEY') or ''
         self.api_key = _clean_api_key(raw)
         self.model = model or os.environ.get('LLM_MODEL', 'llama-3.3-70b-versatile')
-        self.feature_names = feature_names or DEFAULT_MODEL_FEATURES
+        # feature_names is kept only for backwards compatibility; SHAP features are passed per-call
+        self.feature_names = feature_names or []
 
         if client is not None:
             self._llm_client = client
@@ -42,130 +47,107 @@ class LLMFraudDetector:
                 raise ValueError("GROQ_API_KEY not found. Please set it in .env file.")
             self._llm_client = GroqLLMClient(api_key=self.api_key, model=self.model)
 
-        self.metrics = {}
+    @staticmethod
+    def _build_features_context(top_features: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Normalise SHAP top features into a stable structure:
+        [{name, value, shap_value}, ...], capped to the top 3–5 entries.
+        """
+        context: List[Dict[str, Any]] = []
+        # Enforce a hard cap of 5 features; callers are expected to pass
+        # pre-sorted SHAP features (highest |shap_value| first).
+        limited = top_features[:5]
+        for f in limited:
+            context.append(
+                {
+                    "name": str(f.get("name")),
+                    "value": float(f.get("value", 0.0)),
+                    "shap_value": float(f.get("shap_value", 0.0)),
+                }
+            )
+        return context
 
-    def _create_prompt(self, transaction):
-        """Create a prompt aligned with model features (amount, velocity, device change, etc.)."""
-        if hasattr(transaction, 'to_dict'):
-            data = transaction.to_dict()
+    def _create_prompt(self, risk_score: float, top_features: List[Dict[str, Any]]) -> str:
+        """
+        Create a prompt that ONLY exposes:
+        - the ML risk score (0–100)
+        - the top SHAP features (name, value, shap_value)
+        """
+        # Enforce 3–5 SHAP features in the prompt where possible.
+        # Callers should already pass the top features (sorted by |SHAP|).
+        if not top_features:
+            features_for_prompt: List[Dict[str, Any]] = []
         else:
-            data = transaction
+            # At most 5, at least as many as we actually have (up to 5)
+            features_for_prompt = top_features[:5]
 
-        all_fields = list(dict.fromkeys(
-            self.feature_names + ['amount', 'hour', 'transaction_velocity', 'device_change',
-                                 'location_change_km', 'failed_attempts', 'beneficiary_fan_in']
-        ))
-        context = {k: data.get(k, 'N/A') for k in all_fields if k in data}
+        features_context = self._build_features_context(features_for_prompt)
 
         prompt = f"""
-        Analyze this UPI transaction for fraud risk.
+You are an expert UPI fraud risk analyst.
+You are given:
+- A fraud risk score from a machine learning model (0–100, higher = more risky).
+- The top contributing SHAP features from that model for this transaction.
 
-        Transaction Data (aligned with model features):
-        {json.dumps(context, indent=2)}
+Risk score: {risk_score:.1f}
 
-        Key features to consider: amount, amount_deviation_pct, transaction_velocity, device_change,
-        location_change_km, failed_attempts, is_night, beneficiary_fan_in, is_new_beneficiary.
+Top SHAP features (feature, value, SHAP contribution for fraud class):
+{json.dumps(features_context, indent=2)}
 
-        Task:
-        - Determine if fraudulent (is_fraud=1) or legitimate (is_fraud=0).
-        - Provide confidence (0-100), reasoning, and risk_factors.
-        - Reference specific feature values in reasoning (e.g. "Amount deviation 150%", "Device change detected", "Velocity 8 txns").
-        - risk_factors must cite model features with values when relevant.
+Instructions:
+- Do NOT re-classify the transaction as fraud/legitimate.
+- Treat the risk score as already computed by the ML model.
+- Explain in clear, concise language WHY the risk score is at this level,
+  referring explicitly to the listed features, their values, and whether they
+  increase or decrease fraud risk.
+- Use at most 120 words in the reasoning text.
+- Summarise the main 2–5 risk factors as short bullet-style strings.
 
-        Output JSON only:
-        {{
-            "is_fraud": boolean,
-            "confidence": number,
-            "reasoning": "string explaining why, citing amount, velocity, device_change, location_change, etc.",
-            "risk_factors": ["feature: observation", ...]
-        }}
-        """
+Output JSON only:
+{{
+  "reasoning": "string with natural language explanation (max 120 words, ideally 2–5 sentences)",
+  "risk_factors": ["short bullet 1", "short bullet 2", "..."]
+}}
+"""
         return prompt
 
-    def predict_single(self, transaction_data):
+    def explain(
+        self,
+        risk_score: float,
+        top_features: List[Dict[str, Any]],
+        temperature: float = 0.1,
+    ) -> Tuple[str, List[str]]:
         """
-        Predict fraud for a single transaction
-        Returns: prediction (0/1), confidence, reasoning, risk_factors
+        Generate an LLM explanation given a risk score and top SHAP features.
+
+        Returns:
+            (reasoning, risk_factors)
         """
         try:
-            prompt = self._create_prompt(transaction_data)
+            prompt = self._create_prompt(risk_score, top_features)
             messages = [
-                {"role": "system", "content": "You are an expert financial fraud detection system. Output valid JSON only."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": "You are an expert financial fraud detection explainer. "
+                               "Output valid JSON only, no extra text.",
+                },
+                {"role": "user", "content": prompt},
             ]
-            response_text = self._llm_client.complete(messages, temperature=0.1)
+            response_text = self._llm_client.complete(messages, temperature=temperature)
             result = json.loads(response_text)
-            
-            prediction = 1 if result.get('is_fraud', False) else 0
-            confidence = result.get('confidence', 0)
-            reasoning = result.get('reasoning', "No reasoning provided")
-            risk_factors = result.get('risk_factors', [])
-            
-            return prediction, confidence, reasoning, risk_factors
-            
+
+            reasoning = result.get("reasoning", "No reasoning provided")
+            risk_factors = result.get("risk_factors", [])
+            if not isinstance(risk_factors, list):
+                risk_factors = []
+            # Enforce a hard cap of ~120 words on the explanation.
+            if isinstance(reasoning, str):
+                words = reasoning.split()
+                if len(words) > 120:
+                    reasoning = " ".join(words[:120]) + " ..."
+            # Cap risk factors list length to 5 entries.
+            risk_factors = risk_factors[:5]
+            return reasoning, risk_factors
         except Exception as e:
-            print(f"LLM Prediction Error: {e}")
-            # Fallback safe return
-            return 0, 0.0, f"Error: {str(e)}", []
-
-    def predict_batch(self, df, max_samples=100):
-        """
-        Run predictions on a batch of transactions (DataFrame)
-        """
-        results = []
-        actuals = []
-        predictions = []
-        
-        # Limit samples
-        samples = df.head(max_samples).copy()
-        print(f"   Processing {len(samples)} transactions with {self.model}...")
-        
-        for i, (index, row) in enumerate(samples.iterrows()):
-            # Rate limiting (simple)
-            if i > 0 and i % 10 == 0:
-                time.sleep(1)
-                print(f"   Processed {i}/{len(samples)}...")
-                
-            pred, conf, reason, risks = self.predict_single(row)
-            
-            results.append({
-                'transaction_id': row.get('transaction_id', index),
-                'actual_is_fraud': row.get('is_fraud', 0),
-                'llm_prediction': pred,
-                'llm_confidence': conf,
-                'llm_reasoning': reason,
-                'risk_factors': str(risks)
-            })
-            
-            actuals.append(row.get('is_fraud', 0))
-            predictions.append(pred)
-            
-        # Calculate metrics
-        if actuals and predictions:
-            self.metrics = {
-                'accuracy': accuracy_score(actuals, predictions),
-                'precision': precision_score(actuals, predictions, zero_division=0),
-                'recall': recall_score(actuals, predictions, zero_division=0),
-                'f1_score': f1_score(actuals, predictions, zero_division=0)
-            }
-            
-        return pd.DataFrame(results)
-
-    def analyze_sample_predictions(self, results_df, n_samples=3):
-        """Print analysis of sample predictions"""
-        print("\n🔍 LLM Analysis Samples:")
-        print("-" * 60)
-        # Column is 'llm_prediction' (set by predict_batch), not 'llm_is_fraud'
-        pred_col = 'llm_prediction' if 'llm_prediction' in results_df.columns else None
-        if pred_col is None:
-            print("  No prediction column found (LLM may have failed for all rows).")
-            return
-        frauds = results_df[results_df[pred_col] == 1]
-        samples = frauds.head(n_samples) if not frauds.empty else results_df.head(n_samples)
-        for _, row in samples.iterrows():
-            status = "✅ CORRECT" if row[pred_col] == row['actual_is_fraud'] else "❌ INCORRECT"
-            print(f"Transaction ID: {row['transaction_id']}")
-            print(f"Prediction: {'FRAUD' if row[pred_col] else 'LEGIT'} ({status})")
-            print(f"Confidence: {row['llm_confidence']}%")
-            print(f"Reasoning: {row['llm_reasoning']}")
-            print("-" * 60)
+            # Fallback safe return; caller can still show something to the user
+            return f"LLM explanation failed: {str(e)}", []

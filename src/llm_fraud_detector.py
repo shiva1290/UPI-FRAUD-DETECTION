@@ -203,87 +203,10 @@ Respond ONLY with valid JSON, no additional text."""
         
         return result_df
     
-    def evaluate(self, results_df):
-        """
-        Evaluate LLM performance
-        
-        Args:
-            results_df: DataFrame with actual labels and LLM predictions
-        
-        Returns:
-            Dictionary of performance metrics
-        """
-        
-        from sklearn.metrics import (
-            accuracy_score, precision_score, recall_score, 
-            f1_score, confusion_matrix, roc_auc_score
-        )
-        
-        y_true = results_df['is_fraud'].values
-        y_pred = results_df['llm_prediction'].values
-        y_conf = results_df['llm_confidence'].values
-        
-        metrics = {
-            'accuracy': accuracy_score(y_true, y_pred),
-            'precision': precision_score(y_true, y_pred, zero_division=0),
-            'recall': recall_score(y_true, y_pred, zero_division=0),
-            'f1_score': f1_score(y_true, y_pred, zero_division=0),
-            'roc_auc': roc_auc_score(y_true, y_conf) if len(np.unique(y_true)) > 1 else 0,
-            'confusion_matrix': confusion_matrix(y_true, y_pred),
-            'avg_confidence': y_conf.mean()
-        }
-        
-        self.performance_metrics = metrics
-        
-        return metrics
-    
-    def print_evaluation(self, results_df):
-        """Print detailed evaluation results"""
-        
-        metrics = self.evaluate(results_df)
-        
-        print(f"\n{'='*60}")
-        print(f"LLM-BASED FRAUD DETECTION (Groq API)")
-        print(f"{'='*60}")
-        print(f"Model: {self.model}")
-        print(f"Samples Analyzed: {len(results_df)}")
-        print(f"\nPerformance Metrics:")
-        print(f"  Accuracy:  {metrics['accuracy']:.4f}")
-        print(f"  Precision: {metrics['precision']:.4f}")
-        print(f"  Recall:    {metrics['recall']:.4f}")
-        print(f"  F1-Score:  {metrics['f1_score']:.4f}")
-        print(f"  ROC-AUC:   {metrics['roc_auc']:.4f}")
-        print(f"  Avg Confidence: {metrics['avg_confidence']:.4f}")
-        print(f"\nConfusion Matrix:")
-        print(metrics['confusion_matrix'])
-        print(f"{'='*60}\n")
-        
-        return metrics
-    
-    def show_sample_predictions(self, results_df, n=5):
-        """Show sample predictions with reasoning"""
-        
-        print(f"\n{'='*80}")
-        print(f"SAMPLE LLM PREDICTIONS WITH REASONING")
-        print(f"{'='*80}\n")
-        
-        # Show mix of correct and incorrect predictions
-        correct = results_df[results_df['is_fraud'] == results_df['llm_prediction']].head(n//2)
-        incorrect = results_df[results_df['is_fraud'] != results_df['llm_prediction']].head(n//2)
-        samples = pd.concat([correct, incorrect])
-        
-        for idx, row in samples.iterrows():
-            actual = "FRAUD" if row['is_fraud'] == 1 else "LEGITIMATE"
-            predicted = "FRAUD" if row['llm_prediction'] == 1 else "LEGITIMATE"
-            correct_pred = "✓" if actual == predicted else "✗"
-            
-            print(f"{correct_pred} Transaction #{idx}")
-            print(f"  Amount: ₹{row['amount']:.2f} | Hour: {row['hour']} | Velocity: {row['transaction_velocity']}")
-            print(f"  Actual: {actual} | Predicted: {predicted} | Confidence: {row['llm_confidence']:.2f}")
-            print(f"  Reasoning: {row['llm_reasoning']}")
-            print("-" * 80)
-        
-        print()
+    # NOTE:
+    # Accuracy / precision / recall / confusion-matrix based evaluation for LLM outputs
+    # has been intentionally removed. The LLM should not be treated as a fraud classifier;
+    # it is used only for explanations in the main application.
 
 
 def create_env_template():
